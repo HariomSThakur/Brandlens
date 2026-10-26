@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f9">
+  <meta name="description" content="BrandLens reviews drafts against approved brand facts and guidelines before publication.">
+  <title>BrandLens — Brand-safe content review</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#review" aria-label="BrandLens home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span>brand<span class="brand-light">lens</span><small>CONTENT GOVERNANCE</small></span>
+      </a>
+      <div class="side-workspace"><span class="workspace-dot"></span><span><b>Luma Botanics</b><small>Demo workspace</small></span><span class="chevron">⌄</span></div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-page="review"><span class="nav-icon">◉</span>Review draft <span class="nav-count" id="open-count">0</span></button>
+        <button class="nav-item" data-page="sources"><span class="nav-icon">▤</span>Source library <span class="nav-count" id="source-count">0</span></button>
+        <button class="nav-item" data-page="claims"><span class="nav-icon">✓</span>Claim ledger <span class="nav-count" id="claim-count">0</span></button>
+        <button class="nav-item" data-page="activity"><span class="nav-icon">◷</span>Activity log</button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="help-card"><span class="help-icon">i</span><div><b>Review with confidence</b><p>Every finding points to a source. People make the final call.</p><button data-page="settings" class="text-button">Workspace settings →</button></div></div>
+      <div class="profile-row"><div class="avatar">HT</div><div><b>Hariom Thakur</b><small>Workspace owner</small></div><button class="icon-button" id="account-button" aria-label="Account settings">···</button></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar"><div class="crumb"><span>Workspace</span><span class="slash">/</span><b id="crumb-page">Review draft</b></div><div class="top-actions"><span class="storage-pill" id="storage-status"><i></i> Local demo</span><button class="button button-quiet button-small" id="export-button">Export backup</button><button class="button button-dark button-small" id="sync-button">Connect Supabase</button></div></header>
+
+      <section class="page active" id="page-review" aria-labelledby="page-title">
+        <div class="page-heading"><div><div class="eyebrow">BRAND CONTENT REVIEW</div><h1 id="page-title">Review before you publish.</h1><p>Check a draft against your approved facts, claims and writing rules.</p></div><div class="heading-meta"><span class="pulse-dot"></span> Drafts stay private in this browser</div></div>
+        <div class="stats-grid" id="stats-grid"></div>
+        <div class="review-layout">
+          <section class="panel editor-panel" aria-labelledby="draft-title">
+            <div class="panel-head"><div><div class="section-kicker">01 · CONTENT</div><h2 id="draft-title">Your draft</h2></div><span class="version-chip">Unsaved draft</span></div>
+            <div class="field-row"><label for="draft-name">Draft name</label><input id="draft-name" value="Spring launch — social post" maxlength="100"></div>
+            <label class="field-label" for="draft-text">Paste your content</label>
+            <textarea id="draft-text" maxlength="30000" spellcheck="true" aria-describedby="draft-hint"></textarea>
+            <div class="editor-footer"><span id="draft-hint">Paste plain text or import a .txt or .md file.</span><span id="char-count">0 characters</span></div>
+            <div class="editor-actions"><label class="button button-outline file-button" for="file-input">Import text</label><input id="file-input" type="file" accept=".txt,.md,text/plain,text/markdown" hidden><button class="button button-primary" id="review-button"><span>Run review</span><b>→</b></button></div>
+            <div class="privacy-note"><span class="lock-icon">▣</span><span><b>Human approval stays in control.</b> Findings are advisory. Nothing is published automatically.</span></div>
+          </section>
+
+          <section class="panel findings-panel" aria-labelledby="findings-title">
+            <div class="panel-head"><div><div class="section-kicker">02 · REVIEW</div><h2 id="findings-title">Findings <span class="heading-count" id="finding-total">0</span></h2></div><span class="ai-status" id="ai-status"><i></i> Rule checks active</span></div>
+            <div id="findings-list" class="findings-list"></div>
+            <div class="empty-state" id="findings-empty"><div class="empty-illustration"><span>✓</span></div><b>Ready when you are</b><p>Run a review to see source-linked findings and suggested edits here.</p></div>
+            <div class="review-summary" id="review-summary" hidden></div>
+          </section>
+        </div>
+        <section class="panel source-strip"><div class="source-strip-title"><div><div class="section-kicker">YOUR APPROVED MATERIALS</div><h2>Review uses these sources</h2></div><button class="text-button" data-page="sources">Manage sources →</button></div><div id="source-preview" class="source-preview"></div></section>
+      </section>
+
+      <section class="page" id="page-sources" aria-labelledby="sources-title">
+        <div class="page-heading"><div><div class="eyebrow">KNOWLEDGE BASE</div><h1 id="sources-title">Source library</h1><p>Keep approved guidance and evidence versioned and easy to inspect.</p></div><button class="button button-primary" id="add-source">+ Add source</button></div>
+        <div class="notice-banner"><span>ⓘ</span><p><b>Demo materials are fictional.</b> Replace them with approved sources before using BrandLens for real content.</p></div>
+        <div id="sources-list" class="resource-grid"></div>
+      </section>
+
+      <section class="page" id="page-claims" aria-labelledby="claims-title">
+        <div class="page-heading"><div><div class="eyebrow">APPROVED CLAIMS</div><h1 id="claims-title">Claim ledger</h1><p>Track the wording, evidence owner and expiry for claims that are cleared for reuse.</p></div><button class="button button-primary" id="add-claim">+ Add approved claim</button></div>
+        <div class="notice-banner"><span>ⓘ</span><p>Expired evidence is surfaced for review. Missing evidence never means a claim is automatically false.</p></div>
+        <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>APPROVED WORDING</th><th>SOURCE</th><th>OWNER</th><th>REVIEW DATE</th><th>STATUS</th><th></th></tr></thead><tbody id="claims-table"></tbody></table></div></div>
+      </section>
+
+      <section class="page" id="page-activity" aria-labelledby="activity-title">
+        <div class="page-heading"><div><div class="eyebrow">DECISION HISTORY</div><h1 id="activity-title">Activity log</h1><p>Review actions are recorded so decisions can be traced later.</p></div><button class="button button-outline" id="clear-activity">Clear local history</button></div>
+        <div id="activity-list" class="panel activity-list"></div>
+      </section>
+
+      <section class="page" id="page-settings" aria-labelledby="settings-title">
+        <div class="page-heading"><div><div class="eyebrow">WORKSPACE CONTROL</div><h1 id="settings-title">Settings</h1><p>Choose where your workspace data lives and how optional AI review is used.</p></div></div>
+        <div class="settings-grid">
+          <div class="panel setting-card"><div class="setting-icon teal">▤</div><h2>Storage and privacy</h2><p id="storage-description">Local demo mode stores your workspace in this browser only. No account or cloud sync is active.</p><button class="button button-outline" id="settings-sync">Configure Supabase</button><button class="button button-outline" id="reset-demo">Reset fictional workspace</button><p class="fine-print">For cloud sync, add your Supabase project URL and public anon key to <code>.env</code>, then apply the provided schema. Never put a service-role key in this app.</p></div>
+          <div class="panel setting-card"><div class="setting-icon violet">✳</div><h2>Optional Qwen review</h2><p id="model-description">Deterministic checks work without a model. An Ollama-hosted Qwen model can add advisory tone review when configured on the server.</p><span class="setting-chip" id="model-chip">Rule checks only</span><p class="fine-print">Model suggestions are advisory, validated against the submitted draft, and never approve or publish content.</p></div>
+          <div class="panel setting-card wide"><div class="setting-icon gold">◈</div><h2>Confidentiality modes</h2><div class="mode-list"><div><b>Synthetic data only</b><span>Use the included fictional workspace.</span></div><div><b>Local model</b><span>Optional review requests stay on your machine when your Ollama endpoint is local.</span></div><div><b>Remote model</b><span>Configure only after reviewing the host's retention terms. The app sends the draft and relevant excerpts, not the full library.</span></div></div></div>
+        </div>
+      </section>
+      <footer class="app-footer"><span>BrandLens · Human-led content governance</span><span>Round 2 MVP · Fictional demo workspace</span></footer>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-head"><div><div class="eyebrow" id="modal-kicker">WORKSPACE</div><h2 id="modal-title">Add source</h2></div><button class="icon-button" id="modal-close" aria-label="Close dialog">×</button></div><div id="modal-body"></div></section></div>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
+

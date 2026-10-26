@@ -1,0 +1,271 @@
+const STORAGE_KEY = 'brandlens.round2.workspace.v1';
+const SESSION_KEY = 'brandlens.supabase.session.v1';
+const today = new Date().toISOString().slice(0, 10);
+const id = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const iso = () => new Date().toISOString();
+const fmtDate = value => value ? new Date(`${value.slice(0,10)}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '—';
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sampleState = () => {
+  const facts = { id:id(), title:'Approved product facts — Dewdrop Serum', type:'Product facts', owner:'Hariom Thakur', expiry:'2026-12-31', updated:iso(), content:'A 28-day consumer use test with 30 participants found improved skin hydration. The study did not evaluate pigmentation, acne, or effects within three days.' };
+  const guide = { id:id(), title:'Brand voice and claims guide', type:'Brand guideline', owner:'Hariom Thakur', expiry:'2027-03-31', updated:iso(), content:'Use clear, warm, evidence-led language. Avoid guarantees, “clinically proven”, “erase”, and unsupported timeframes. Replace “whitening” with “brightening”. Use at most one exclamation mark per post.' };
+  const old = { id:id(), title:'Historical customer count export', type:'Claim evidence', owner:'Hariom Thakur', expiry:'2026-06-30', updated:iso(), content:'An old store export recorded 50,000 customer orders. It is not independently audited and is past its review date; it must not be used as current proof of customer popularity.' };
+  return {
+    workspace:'Luma Botanics', sources:[facts,guide,old],
+    claims:[
+      {id:id(), wording:'In a 28-day consumer use test, participants showed improved skin hydration.', sourceId:facts.id, owner:'Hariom Thakur', reviewDate:'2026-12-31', status:'approved'},
+      {id:id(), wording:'Loved by 50,000 customers', sourceId:old.id, owner:'Hariom Thakur', reviewDate:'2026-06-30', status:'expired'}
+    ],
+    draftName:'Spring launch — social post',
+    draft:'Clinically proven to erase dark spots in 3 days! Loved by 50,000 customers!!!',
+    findings:[], audit:[{id:id(),action:'Demo workspace opened',detail:'Fictional sample sources loaded in this browser.',at:iso()}],
+    reviews:0, approvals:0, reviewed:false
+  };
+};
+let state;
+try { state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || sampleState(); } catch { state = sampleState(); }
+state.sources ||= []; state.claims ||= []; state.findings ||= []; state.audit ||= []; state.reviews ||= 0; state.approvals ||= 0;
+let config = {supabaseUrl:'',supabaseAnonKey:'',ollamaReady:false,ollamaModel:''};
+let session = null;
+try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch {}
+let page = 'review';
+let pendingAction = null;
+const $ = selector => document.querySelector(selector);
+const modal = $('#modal-backdrop');
+
+function audit(action, detail) { state.audit.unshift({id:id(),action,detail,at:iso()}); state.audit = state.audit.slice(0,250); }
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  $('#storage-status').innerHTML = `<i></i> ${session ? 'Supabase connected' : 'Local demo'}`;
+  $('#storage-description').textContent = session ? `Signed in as ${session.user?.email || 'workspace owner'}. Use Sync to save this browser's workspace to Supabase.` : 'Local demo mode stores your workspace in this browser only. No account or cloud sync is active.';
+}
+function sourceById(sourceId) { return state.sources.find(item => item.id === sourceId); }
+function openFindings() { return state.findings.filter(f => f.status === 'open' || f.status === 'escalated'); }
+function renderStats() {
+  const expired = state.sources.filter(s => s.expiry && s.expiry < today).length;
+  const open = openFindings().length;
+  $('#stats-grid').innerHTML = [
+    ['Drafts reviewed',state.reviews,'In this browser','teal','▤'],
+    ['Open findings',open,open ? 'Needs a decision' : 'No open findings','gold','!'],
+    ['Sources expiring',expired,expired ? 'Past review date' : 'No expired sources','red','◷'],
+    ['Approvals logged',state.approvals,'Human decisions only','blue','✓']
+  ].map(([label,value,note,color,icon])=>`<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon ${color}">${icon}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('');
+  $('#open-count').textContent = open;
+  $('#source-count').textContent = state.sources.length;
+  $('#claim-count').textContent = state.claims.length;
+}
+function renderSources() {
+  $('#source-preview').innerHTML = state.sources.slice(0,3).map(s=>`<article class="source-mini"><b>${esc(s.title)}</b><span>${esc(s.type)} · review by ${fmtDate(s.expiry)}</span></article>`).join('') || '<div class="empty-table">Add an approved source to start a review.</div>';
+  $('#sources-list').innerHTML = state.sources.map(s=>{
+    const expired = s.expiry && s.expiry < today;
+    return `<article class="panel resource-card"><div class="resource-head"><span class="resource-type">▤ &nbsp;${esc(s.type)}</span><button class="danger-button" data-delete-source="${s.id}" ${state.claims.some(c=>c.sourceId===s.id)?'disabled title="A claim uses this source"':''}>Remove</button></div><h2>${esc(s.title)}</h2><p>${esc(s.content)}</p><div class="resource-meta"><span>Owner: ${esc(s.owner || 'Unassigned')}</span><span class="${expired?'expired':''}">${expired?'Expired':'Review by'} ${fmtDate(s.expiry)}</span></div></article>`;
+  }).join('') || '<div class="panel empty-table">No sources yet. Add approved guidance or evidence.</div>';
+}
+function renderClaims() {
+  $('#claims-table').innerHTML = state.claims.map(c=>{
+    const source = sourceById(c.sourceId); const expired = c.status==='expired' || (c.reviewDate && c.reviewDate < today);
+    return `<tr><td>${esc(c.wording)}</td><td>${esc(source?.title || 'Source removed')}</td><td>${esc(c.owner || 'Unassigned')}</td><td>${fmtDate(c.reviewDate)}</td><td><span class="status-tag ${expired?'expired':''}">${expired?'Review required':'Approved'}</span></td><td><button class="danger-button" data-delete-claim="${c.id}">Remove</button></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty-table">No approved claims yet. Add one with a linked source.</td></tr>';
+}
+function highlighted(draft, quote) {
+  const start = draft.indexOf(quote);
+  if (start < 0) return esc(quote);
+  return `${esc(draft.slice(0,start))}<mark class="highlight">${esc(quote)}</mark>${esc(draft.slice(start+quote.length))}`;
+}
+function findingCard(f) {
+  const sev = ['high','medium','low'].includes(f.severity) ? f.severity : 'medium';
+  const source = sourceById(f.sourceId);
+  const sourceTitle = f.sourceTitle || source?.title || 'No approved source matched';
+  const sourceQuote = f.sourceQuote || source?.content || 'Add or link an approved source to support this finding.';
+  const isClaim = f.category === 'claim';
+  const statusLabel = f.status === 'open' ? '' : `<span class="finding-status">${esc(f.status === 'updated' ? 'Edit accepted' : f.status)}</span>`;
+  let actions = '';
+  if (f.status === 'open') {
+    actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${f.id}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${f.id}">Edit draft</button>`;
+    if (isClaim) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${f.id}">Resolve with evidence</button>`;
+    actions += `<button class="mini-action" data-finding-action="escalate" data-id="${f.id}">Escalate</button>`;
+    if (!isClaim) actions += `<button class="mini-action" data-finding-action="dismiss" data-id="${f.id}">Dismiss</button>`;
+  }
+  return `<article class="finding-card ${sev}"><div class="finding-top"><span class="finding-type">${esc(f.type)}</span><span class="severity ${sev}">${esc(sev)} risk</span></div><div class="finding-body"><p class="quote">${highlighted(state.draft,f.quote)}</p><p>${esc(f.reason)}</p><div class="source-cite"><b>Source checked · ${esc(sourceTitle)}</b>${esc(sourceQuote)}</div>${f.suggestion?`<p><b>Suggested edit:</b> “${esc(f.suggestion)}”</p>`:''}</div><div class="finding-actions">${actions}${statusLabel}</div></article>`;
+}
+function renderFindings() {
+  $('#finding-total').textContent = state.findings.length;
+  $('#findings-list').innerHTML = state.findings.map(findingCard).join('');
+  $('#findings-empty').hidden = state.findings.length > 0;
+  const summary = $('#review-summary');
+  if (state.reviewed) {
+    const canApprove = state.findings.every(f => !['open','escalated'].includes(f.status));
+    summary.hidden = false;
+    summary.innerHTML = `<div>${canApprove?'All findings have a recorded decision. A person can record approval.':`${openFindings().length} finding${openFindings().length===1?'':'s'} still need a decision before approval.`}</div><button class="button button-small ${canApprove?'button-primary':'button-outline'}" id="approve-button" ${canApprove?'':'disabled'}>Record human approval</button>`;
+  } else { summary.hidden = true; summary.textContent=''; }
+}
+function renderActivity() {
+  $('#activity-list').innerHTML = state.audit.length ? state.audit.map(item=>`<article class="activity-item"><div class="activity-icon">✓</div><div><b>${esc(item.action)}</b><p>${esc(item.detail)}</p></div><time>${new Date(item.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></article>`).join('') : '<div class="empty-table">No decisions recorded yet.</div>';
+}
+function renderAll({draft=false}={}) {
+  renderStats(); renderSources(); renderClaims(); renderFindings(); renderActivity();
+  if (draft) { $('#draft-name').value = state.draftName; $('#draft-text').value = state.draft; updateCharCount(); }
+  save();
+}
+function updateCharCount() { $('#char-count').textContent = `${$('#draft-text').value.length.toLocaleString()} characters`; }
+function toast(message, error=false) {
+  const node = document.createElement('div'); node.className = `toast${error?' error':''}`; node.textContent = message; $('#toast-stack').append(node); setTimeout(()=>node.remove(),4300);
+}
+function go(next) {
+  page = next;
+  document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id===`page-${next}`));
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===next));
+  const names = {review:'Review draft',sources:'Source library',claims:'Claim ledger',activity:'Activity log',settings:'Settings'};
+  $('#crumb-page').textContent = names[next] || 'Review draft';
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function makeFinding({type,category='claim',severity='high',quote,sourceId=null,reason,suggestion}) {
+  const source=sourceById(sourceId);
+  return {id:id(),type,category,severity,quote,sourceId,sourceTitle:source?.title||'',sourceQuote:source?.content||'',reason,suggestion,status:'open',createdAt:iso()};
+}
+function deterministicReview(draft) {
+  const findings=[]; const sourceFact=state.sources.find(s=>/product facts|fact sheet|study/i.test(`${s.type} ${s.title}`)) || state.sources[0];
+  const sentences=[...draft.matchAll(/[^.!?\n]+[.!?]?/g)].map(m=>({text:m[0].trim(),start:m.index+(m[0].length-m[0].trimStart().length)})).filter(x=>x.text);
+  for (const part of sentences) {
+    const norm=part.text.toLowerCase();
+    const oldClaim=state.claims.find(c=>norm.includes(c.wording.toLowerCase()));
+    if (oldClaim && (oldClaim.status==='expired' || (oldClaim.reviewDate && oldClaim.reviewDate<today))) {
+      findings.push(makeFinding({type:'Expired claim evidence',category:'claim',severity:'high',quote:part.text,sourceId:oldClaim.sourceId,reason:`This wording matches a claim whose review date passed on ${fmtDate(oldClaim.reviewDate)}. Refresh and approve its evidence before reuse.`,suggestion:'Remove the customer-count claim until current evidence is approved.'}));
+    } else if (/\b(clinically proven|clinically tested|guarantee(?:d)?|erase|cure|permanent|100%|\d[\d,]*\+?\s*(?:customers|families|users|people|days?|weeks?|months?))\b/i.test(part.text)) {
+      const suggestion=/\b(customer|family|families|users|people)\b/i.test(part.text) ? 'We are grateful to our community.' : (state.claims.find(c=>c.status==='approved'&&/hydration/i.test(c.wording))?.wording || 'Explore our daily skincare routine.');
+      findings.push(makeFinding({type:'Claim needs evidence',category:'claim',severity:'high',quote:part.text,sourceId:sourceFact?.id,reason:'This sentence makes a performance, timeframe or quantified claim. The linked source must support the exact result and scope before use.',suggestion}));
+    }
+    const banned=part.text.match(/\b(whitening|bleaching)\b/i);
+    if (banned) findings.push(makeFinding({type:'Terminology',category:'terminology',severity:'medium',quote:banned[0],sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'The writing guide asks creators to use approved brand terminology.',suggestion:'brightening'}));
+    if (/!{2,}/.test(part.text)) findings.push(makeFinding({type:'Tone',category:'tone',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'The writing guide allows at most one exclamation mark per post.',suggestion:part.text.replace(/!{2,}/g,'!')}));
+    if (/^[A-Z\d\s.,!?'-]{18,}$/.test(part.text) && /[A-Z]/.test(part.text)) findings.push(makeFinding({type:'Readability',category:'readability',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'This all-caps text may be harder to scan. Review the casing.',suggestion:part.text.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}));
+    if (part.text.split(/\s+/).length>38) findings.push(makeFinding({type:'Readability',category:'readability',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'This sentence is long. Consider splitting it so readers can scan it more easily.',suggestion:part.text}));
+  }
+  return findings;
+}
+async function runReview() {
+  const draft=$('#draft-text').value.trim();
+  if (!draft) return toast('Add draft text before running a review.',true);
+  state.draft=draft; state.draftName=$('#draft-name').value.trim() || 'Untitled draft';
+  state.findings=deterministicReview(draft); state.reviews+=1; state.reviewed=true;
+  audit('Draft reviewed',`${state.findings.length} deterministic finding(s) created for “${state.draftName}”.`);
+  renderAll();
+  $('#ai-status').innerHTML = config.ollamaReady ? '<i></i> Adding optional Qwen review…' : '<i></i> Rule checks active';
+  toast(`${state.findings.length} finding${state.findings.length===1?'':'s'} created from the approved rules and source dates.`);
+  if (config.ollamaReady) {
+    try {
+      const result=await fetch('/api/ai-review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({draft,sources:state.sources.map(s=>({title:s.title,content:s.content}))})});
+      const payload=await result.json(); if(!result.ok) throw new Error(payload.error||'AI review unavailable');
+      let added=0;
+      for(const f of payload.findings||[]) {
+        if(!draft.includes(f.quote)||state.findings.some(x=>x.quote===f.quote&&x.type===f.type)) continue;
+        const source=state.sources.find(s=>s.title===f.sourceTitle)||state.sources.find(s=>f.sourceQuote&&s.content.includes(f.sourceQuote));
+        const exactQuote=source&&f.sourceQuote&&source.content.includes(f.sourceQuote)?f.sourceQuote:source?.content||'';
+        state.findings.push({id:id(),type:String(f.type||'AI suggestion').slice(0,50),category:/claim|evidence/i.test(f.type||'')?'claim':'tone',severity:['high','medium','low'].includes(f.severity)?f.severity:'medium',quote:f.quote,sourceId:source?.id||null,sourceTitle:source?.title||'No matching approved source',sourceQuote:exactQuote,reason:String(f.reason||'Advisory model suggestion.').slice(0,500),suggestion:String(f.suggestion||'').slice(0,500),status:'open',createdAt:iso(),model:payload.model}); added++;
+      }
+      if(added){audit('Optional Qwen review completed',`${added} additional advisory finding(s) added.`);renderAll();}
+      $('#ai-status').innerHTML=`<i></i> Qwen · ${esc(payload.model)}`;
+      if(added) toast(`Optional Qwen review added ${added} advisory finding(s).`);
+    } catch(error) { $('#ai-status').innerHTML='<i></i> Rule checks active'; toast(`Qwen review unavailable; deterministic results remain. ${error.message}`,true); }
+  }
+}
+function showModal(title, kicker, html) {
+  $('#modal-title').textContent=title; $('#modal-kicker').textContent=kicker; $('#modal-body').innerHTML=html; modal.hidden=false;
+  modal.querySelector('input,textarea,select,button')?.focus();
+}
+function closeModal(){modal.hidden=true;pendingAction=null;}
+function addSourceModal(){
+ showModal('Add approved source','SOURCE LIBRARY',`<form id="source-form" class="form-stack"><label>Source title<input name="title" required maxlength="120" placeholder="e.g. Approved product facts"></label><div class="form-row"><label>Source type<select name="type"><option>Product facts</option><option>Brand guideline</option><option>Claim evidence</option><option>Approved asset list</option></select></label><label>Review date<input name="expiry" type="date"></label></div><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Approved source text<textarea name="content" required maxlength="12000" placeholder="Paste the approved passage or guidance"></textarea></label><p class="modal-help">Only add information you are authorised to use. The demo stores it in this browser unless Supabase is configured.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Save source</button></div></form>`);
+}
+function addClaimModal(){
+ const options=state.sources.map(s=>`<option value="${s.id}">${esc(s.title)}</option>`).join('');
+ showModal('Add approved claim','CLAIM LEDGER',`<form id="claim-form" class="form-stack"><label>Approved wording<textarea name="wording" required maxlength="800" placeholder="Use the exact wording that has been approved"></textarea></label><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><div class="form-row"><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Next review date<input name="reviewDate" type="date"></label></div><p class="modal-help">A claim is not approved by BrandLens. Add only wording that has already been approved by your reviewer.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Save claim</button></div></form>`);
+}
+function actionModal(action,finding){
+ pendingAction={action,findingId:finding.id};
+ if(action==='dismiss') return showModal('Dismiss tone finding','CREATOR ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Dismissal applies to tone or readability suggestions only. It does not erase the audit history.</p><label>Reason<input name="reason" required maxlength="300" placeholder="e.g. Intentional emphasis for this channel"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Record dismissal</button></div></form>`);
+ if(action==='escalate') return showModal('Escalate finding','REVIEWER ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Escalation records the concern and keeps the draft from being approved.</p><label>Reason for escalation<input name="reason" required maxlength="300" placeholder="What needs reviewer attention?"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Escalate</button></div></form>`);
+ const options=state.sources.map(s=>`<option value="${s.id}">${esc(s.title)}</option>`).join('');
+ showModal('Resolve with supporting evidence','REVIEWER ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Attach the source that supports the final wording and record why the reviewer resolved this finding.</p><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><label>Resolution reason<input name="reason" required maxlength="300" placeholder="Explain how the source supports the revised claim"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Resolve finding</button></div></form>`);
+}
+function sessionHeaders(extra={}) { return {apikey:config.supabaseAnonKey,authorization:`Bearer ${session?.access_token||config.supabaseAnonKey}`,...extra}; }
+function authModal(){
+ if(!config.supabaseUrl||!config.supabaseAnonKey) return showModal('Connect Supabase','OPTIONAL CLOUD SYNC',`<div class="form-stack"><p>Supabase is optional. The project works in local demo mode now. To enable cloud accounts, set <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> in your server’s <code>.env</code>, apply <code>supabase/schema.sql</code>, and restart the app.</p><p class="modal-help">Use only the public anon key in the browser. Never expose a service-role key.</p><div class="modal-actions"><button class="button button-outline" data-modal-close>Close</button></div></div>`);
+ showModal('Sign in to sync','SUPABASE WORKSPACE',`<form id="auth-form" class="form-stack"><label>Email<input name="email" type="email" required autocomplete="email"></label><label>Password<input name="password" type="password" required minlength="6" autocomplete="current-password"></label><p class="modal-help">For a new account, use Create account. Email confirmation may be required by your Supabase project settings.</p><div class="modal-actions"><button type="button" class="button button-outline" data-auth-signup>Create account</button><button class="button button-primary">Sign in</button></div></form>`);
+}
+async function authRequest(pathname,body){
+ const response=await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/${pathname}`,{method:'POST',headers:{apikey:config.supabaseAnonKey,'content-type':'application/json'},body:JSON.stringify(body)});
+ const data=await response.json();if(!response.ok)throw new Error(data.msg||data.message||data.error_description||'Supabase authentication failed.');return data;
+}
+async function syncWorkspace(){
+ if(!config.supabaseUrl||!config.supabaseAnonKey)return authModal();
+ if(!session)return authModal();
+ try{
+  const base=config.supabaseUrl.replace(/\/$/,'');
+  const q=`${base}/rest/v1/workspace_state?owner_id=eq.${encodeURIComponent(session.user.id)}&select=payload&limit=1`;
+  const get=await fetch(q,{headers:sessionHeaders()});if(!get.ok)throw new Error('Could not load cloud data. Check that the Supabase schema and access policies are installed.');
+  const rows=await get.json();
+  if(rows.length){state={...sampleState(),...rows[0].payload};audit('Workspace synced from Supabase','Cloud workspace loaded into this browser.');}
+  else {const up=await fetch(`${base}/rest/v1/workspace_state?on_conflict=owner_id`,{method:'POST',headers:sessionHeaders({'content-type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({owner_id:session.user.id,payload:state,updated_at:iso()})});if(!up.ok)throw new Error('Could not save workspace. Check Supabase table permissions.');audit('Workspace synced to Supabase','Local demo workspace saved to your account.');}
+  renderAll({draft:true});toast(rows.length?'Workspace loaded from Supabase.':'Workspace saved to Supabase.');
+ }catch(error){toast(error.message,true);}
+}
+async function exportBackup(){
+ const blob=new Blob([JSON.stringify({exportedAt:iso(),workspace:state},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`brandlens-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(a.href);toast('Workspace backup downloaded.');
+}
+
+$('#draft-text').value=state.draft||'';$('#draft-name').value=state.draftName||'';updateCharCount();renderAll();
+fetch('/api/config').then(r=>r.json()).then(data=>{config=data; if(data.ollamaReady){$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session)$('#storage-status').innerHTML='<i></i> Supabase connected';}).catch(()=>{});
+
+document.addEventListener('click',async event=>{
+ const pageButton=event.target.closest('[data-page]');if(pageButton){go(pageButton.dataset.page);return;}
+ if(event.target.closest('#review-button')){await runReview();return;}
+ if(event.target.closest('#add-source')){addSourceModal();return;}
+ if(event.target.closest('#add-claim')){addClaimModal();return;}
+ if(event.target.closest('#sync-button')||event.target.closest('#settings-sync')){if(session)await syncWorkspace();else authModal();return;}
+ if(event.target.closest('#export-button')){await exportBackup();return;}
+ if(event.target.closest('#reset-demo')){if(confirm('Reset this browser to the fictional Luma Botanics demo workspace? This replaces its current local data.')){state=sampleState();renderAll({draft:true});go('review');toast('Fictional demo workspace restored.');}return;}
+ if(event.target.closest('#modal-close')||event.target.closest('[data-modal-close]')){closeModal();return;}
+ if(event.target.closest('[data-auth-signup]')){const form=$('#auth-form');const data=Object.fromEntries(new FormData(form));try{const result=await authRequest('signup',{email:data.email,password:data.password});if(result.access_token){session=result;sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();toast('Account created.');await syncWorkspace();}else toast('Check your email to confirm the account, then sign in.');}catch(error){toast(error.message,true);}return;}
+ if(event.target.closest('#account-button')){
+  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
+  else if(!session)go('settings');return;
+ }
+ const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;
+  if(action==='apply'){const start=state.draft.indexOf(f.quote);if(start<0)return toast('The quoted text has changed; run the review again.',true);state.draft=state.draft.slice(0,start)+f.suggestion+state.draft.slice(start+f.quote.length);f.status='updated';f.resolutionReason='Creator accepted the suggested edit.';audit('Suggested edit accepted',`${f.type}: “${f.quote}” was replaced in the draft.`);renderAll({draft:true});return toast('Suggested edit applied. Run another review before approval.');}
+  if(action==='edit'){go('review');$('#draft-text').focus();$('#draft-text').scrollIntoView({behavior:'smooth',block:'center'});return;}
+  actionModal(action,f);return;
+ }
+ const delSource=event.target.closest('[data-delete-source]');if(delSource){const sourceId=delSource.dataset.deleteSource;if(state.claims.some(c=>c.sourceId===sourceId))return toast('Remove or update linked claims first.',true);if(confirm('Remove this source from the demo workspace?')){state.sources=state.sources.filter(s=>s.id!==sourceId);audit('Source removed','A source was removed from this workspace.');renderAll();}return;}
+ const delClaim=event.target.closest('[data-delete-claim]');if(delClaim&&confirm('Remove this claim from the ledger?')){state.claims=state.claims.filter(c=>c.id!==delClaim.dataset.deleteClaim);audit('Claim removed','A claim was removed from the ledger.');renderAll();return;}
+ if(event.target.closest('#clear-activity')&&confirm('Clear the local activity log?')){state.audit=[];renderAll();return;}
+ if(event.target.closest('#approve-button')){const unresolved=state.findings.some(f=>['open','escalated'].includes(f.status));if(unresolved)return toast('Resolve or dismiss each finding before approval.',true);if(confirm('Record a human approval for this draft version?')){state.approvals+=1;audit('Draft approved by workspace owner',`Human approval recorded for “${state.draftName}”.`);renderAll();toast('Human approval recorded. Nothing was published.');}return;}
+});
+
+document.addEventListener('submit',async event=>{
+ event.preventDefault();const form=event.target;const data=Object.fromEntries(new FormData(form));
+ if(form.id==='source-form'){
+  state.sources.unshift({id:id(),title:data.title.trim(),type:data.type,owner:data.owner.trim(),expiry:data.expiry||'',updated:iso(),content:data.content.trim()});audit('Source added',`“${data.title.trim()}” was added to the source library.`);closeModal();renderAll();toast('Approved source added.');return;
+ }
+ if(form.id==='claim-form'){
+  state.claims.unshift({id:id(),wording:data.wording.trim(),sourceId:data.sourceId,owner:data.owner.trim(),reviewDate:data.reviewDate||'',status:'approved'});audit('Approved claim added',`“${data.wording.trim()}” was linked to a source.`);closeModal();renderAll();toast('Claim added to the ledger.');return;
+ }
+ if(form.id==='action-form'){
+  const f=state.findings.find(x=>x.id===pendingAction?.findingId);if(!f)return closeModal();
+  const action=pendingAction.action;
+  if(action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed by creators.',true);
+  f.status=action==='dismiss'?'dismissed':action==='escalate'?'escalated':'resolved';f.resolutionReason=data.reason.trim();
+  if(action==='resolve'){f.sourceId=data.sourceId;const source=sourceById(data.sourceId);f.sourceTitle=source?.title||'';f.sourceQuote=source?.content||'';}
+  const actionLabel={dismiss:'Finding dismissed',escalate:'Finding escalated',resolve:'Finding resolved with evidence'}[action];audit(actionLabel,`${f.type}: ${f.resolutionReason}`);closeModal();renderAll();toast(`${actionLabel}.`);return;
+ }
+ if(form.id==='auth-form'){
+  try{session=await authRequest('token?grant_type=password',{email:data.email,password:data.password});sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();$('#sync-button').textContent='Sync workspace';$('#storage-status').innerHTML='<i></i> Supabase connected';toast('Signed in. Syncing workspace…');await syncWorkspace();}
+  catch(error){toast(error.message,true);}return;
+ }
+});
+
+$('#draft-text').addEventListener('input',()=>{state.draft=$('#draft-text').value;state.draftName=$('#draft-name').value;updateCharCount();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
+$('#draft-name').addEventListener('input',()=>{state.draftName=$('#draft-name').value;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
+$('#file-input').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;try{state.draft=await file.text();state.draftName=file.name.replace(/\.(txt|md)$/i,'');$('#draft-text').value=state.draft;$('#draft-name').value=state.draftName;updateCharCount();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));toast(`${file.name} imported. Run review to check the text.`);}catch{toast('Could not read this text file.',true);}event.target.value='';});
+modal.addEventListener('click',event=>{if(event.target===modal)closeModal();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)closeModal();});
+
