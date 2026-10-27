@@ -31,12 +31,9 @@ DOCX/image parsing and automated image recognition are not included in this MVP.
 
 ## Optional Supabase sync
 
-1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy `.env.example` to `.env` and set `SUPABASE_URL` and the project's public anon key.
-4. Restart BrandLens and choose **Sign in to sync**.
+Follow [`docs/supabase-setup.md`](docs/supabase-setup.md) for the complete dashboard, SQL, local `.env`, account, and verification steps.
 
-The app uses Supabase Auth and the REST API. Row-level security limits each authenticated user to their own workspace snapshot. Do not add a service-role key to `.env`; only the public anon key belongs in this client flow. If Supabase is not configured, the app continues in local browser storage mode.
+The app uses Supabase Auth and the REST API. Row-level security limits each authenticated user to their own workspace snapshot. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
 
 ## Optional Qwen review through Ollama
 

@@ -18,7 +18,7 @@
 
 - The MVP is implemented with a small Node.js built-in HTTP server and browser JavaScript to avoid dependency-install and build complexity within the 48-hour window.
 - Supabase stores one authenticated user's workspace as a JSONB snapshot for the MVP rather than normalizing each entity into separate tables.
-- Local browser mode is available before Supabase credentials are provided. Cloud sync is optional and requires the project's URL, anon key, and SQL setup.
+- Local browser mode is available before Supabase credentials are provided. Cloud sync is optional and requires the project's URL, publishable key, and SQL setup.
 - Text import is limited to `.txt` and `.md`. DOCX parsing, image recognition, broader integrations, and multi-language review are deferred.
 - Model review is an optional Ollama connection; the deterministic workflow remains usable if no model is configured or a request fails.
 

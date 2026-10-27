@@ -42,7 +42,7 @@ async function handler(req, res) {
   if (url.pathname === '/api/config' && req.method === 'GET') {
     return send(res, 200, {
       supabaseUrl: process.env.SUPABASE_URL || '',
-      supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+      supabaseAnonKey: process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '',
       ollamaReady: Boolean(process.env.OLLAMA_BASE_URL && process.env.OLLAMA_MODEL),
       ollamaModel: process.env.OLLAMA_MODEL || ''
     });
