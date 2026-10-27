@@ -8,9 +8,9 @@
 - Finding cards with exact draft quote, approved source text, reason and proposed edit.
 - Creator actions to accept a suggested edit, edit the draft, escalate, or dismiss non-claim findings with a reason.
 - Reviewer resolution for claim findings with a linked source and recorded reason.
-- Human approval record only after each finding has a disposition; no publishing capability.
+- Human approval record only after each finding has a disposition and the exact draft plus evidence set have been reviewed; editing the draft or changing evidence requires a fresh review. No publishing capability.
 - Source library, approved-claim ledger and activity log.
-- Local browser persistence, JSON backup export and optional Supabase Auth/cloud sync.
+- Local browser persistence, bounded `.txt` / `.md` import, JSON backup export and optional Supabase Auth/cloud sync. Escalated findings remain actionable for a reviewer.
 - Optional server-side Ollama/Qwen advisory review with quote validation and deterministic-only fallback.
 - Supabase SQL schema with owner-scoped row-level-security policies.
 

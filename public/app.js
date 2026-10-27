@@ -24,6 +24,9 @@ const sampleState = () => {
 let state;
 try { state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || sampleState(); } catch { state = sampleState(); }
 state.sources ||= []; state.claims ||= []; state.findings ||= []; state.audit ||= []; state.reviews ||= 0; state.approvals ||= 0;
+state.reviewedDraft ??= state.reviewed ? (state.draft || '') : null;
+const reviewSignature = () => JSON.stringify([state.draft, state.sources.map(({id,title,type,expiry,content})=>[id,title,type,expiry,content]), state.claims.map(({id,wording,sourceId,reviewDate,status})=>[id,wording,sourceId,reviewDate,status])]);
+state.reviewedSignature ??= state.reviewed ? reviewSignature() : null;
 let config = {supabaseUrl:'',supabaseAnonKey:'',ollamaReady:false,ollamaModel:''};
 let session = null;
 try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch {}
@@ -40,6 +43,7 @@ function save() {
 }
 function sourceById(sourceId) { return state.sources.find(item => item.id === sourceId); }
 function openFindings() { return state.findings.filter(f => f.status === 'open' || f.status === 'escalated'); }
+function reviewIsCurrent() { return Boolean(state.reviewed && state.reviewedDraft === state.draft && state.reviewedSignature === reviewSignature()); }
 function renderStats() {
   const expired = state.sources.filter(s => s.expiry && s.expiry < today).length;
   const open = openFindings().length;
@@ -77,15 +81,16 @@ function findingCard(f) {
   const sourceTitle = f.sourceTitle || source?.title || 'No approved source matched';
   const sourceQuote = f.sourceQuote || source?.content || 'Add or link an approved source to support this finding.';
   const isClaim = f.category === 'claim';
-  const statusLabel = f.status === 'open' ? '' : `<span class="finding-status">${esc(f.status === 'updated' ? 'Edit accepted' : f.status)}</span>`;
+  const actionable = ['open','escalated'].includes(f.status);
+  const statusLabel = actionable ? '' : `<span class="finding-status">${esc(f.status === 'updated' ? 'Edit accepted' : f.status)}</span>`;
   let actions = '';
-  if (f.status === 'open') {
+  if (actionable) {
     actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${f.id}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${f.id}">Edit draft</button>`;
     if (isClaim) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${f.id}">Resolve with evidence</button>`;
     actions += `<button class="mini-action" data-finding-action="escalate" data-id="${f.id}">Escalate</button>`;
     if (!isClaim) actions += `<button class="mini-action" data-finding-action="dismiss" data-id="${f.id}">Dismiss</button>`;
   }
-  return `<article class="finding-card ${sev}"><div class="finding-top"><span class="finding-type">${esc(f.type)}</span><span class="severity ${sev}">${esc(sev)} risk</span></div><div class="finding-body"><p class="quote">${highlighted(state.draft,f.quote)}</p><p>${esc(f.reason)}</p><div class="source-cite"><b>Source checked · ${esc(sourceTitle)}</b>${esc(sourceQuote)}</div>${f.suggestion?`<p><b>Suggested edit:</b> “${esc(f.suggestion)}”</p>`:''}</div><div class="finding-actions">${actions}${statusLabel}</div></article>`;
+  return `<article class="finding-card ${sev}"><div class="finding-top"><span class="finding-type">${esc(f.type)}</span><span class="severity ${sev}">${esc(sev)} risk</span></div><div class="finding-body"><p class="quote">${highlighted(state.draft,f.quote)}</p><p>${esc(f.reason)}</p><div class="source-cite"><b>Related source · ${esc(sourceTitle)}</b>${esc(sourceQuote)}</div>${f.suggestion?`<p><b>Suggested edit:</b> “${esc(f.suggestion)}”</p>`:''}</div><div class="finding-actions">${actions}${statusLabel}</div></article>`;
 }
 function renderFindings() {
   $('#finding-total').textContent = state.findings.length;
@@ -94,8 +99,10 @@ function renderFindings() {
   const summary = $('#review-summary');
   if (state.reviewed) {
     const canApprove = state.findings.every(f => !['open','escalated'].includes(f.status));
+    const current = reviewIsCurrent();
     summary.hidden = false;
-    summary.innerHTML = `<div>${canApprove?'All findings have a recorded decision. A person can record approval.':`${openFindings().length} finding${openFindings().length===1?'':'s'} still need a decision before approval.`}</div><button class="button button-small ${canApprove?'button-primary':'button-outline'}" id="approve-button" ${canApprove?'':'disabled'}>Record human approval</button>`;
+    const message = !current ? 'The draft changed after this review. Run review again before approval.' : canApprove ? 'All findings have a recorded decision. A person can record approval.' : `${openFindings().length} finding${openFindings().length===1?'':'s'} still need a decision before approval.`;
+    summary.innerHTML = `<div>${message}</div><button class="button button-small ${canApprove&&current?'button-primary':'button-outline'}" id="approve-button" ${canApprove&&current?'':'disabled'}>Record human approval</button>`;
   } else { summary.hidden = true; summary.textContent=''; }
 }
 function renderActivity() {
@@ -128,10 +135,12 @@ function deterministicReview(draft) {
   for (const part of sentences) {
     const norm=part.text.toLowerCase();
     const oldClaim=state.claims.find(c=>norm.includes(c.wording.toLowerCase()));
-    if (oldClaim && (oldClaim.status==='expired' || (oldClaim.reviewDate && oldClaim.reviewDate<today))) {
+    const linkedSource=oldClaim && sourceById(oldClaim.sourceId);
+    const claimExpired=oldClaim && (oldClaim.status!=='approved' || (oldClaim.reviewDate && oldClaim.reviewDate<today) || (linkedSource?.expiry && linkedSource.expiry<today));
+    if (claimExpired) {
       findings.push(makeFinding({type:'Expired claim evidence',category:'claim',severity:'high',quote:part.text,sourceId:oldClaim.sourceId,reason:`This wording matches a claim whose review date passed on ${fmtDate(oldClaim.reviewDate)}. Refresh and approve its evidence before reuse.`,suggestion:'Remove the customer-count claim until current evidence is approved.'}));
-    } else if (/\b(clinically proven|clinically tested|guarantee(?:d)?|erase|cure|permanent|100%|\d[\d,]*\+?\s*(?:customers|families|users|people|days?|weeks?|months?))\b/i.test(part.text)) {
-      const suggestion=/\b(customer|family|families|users|people)\b/i.test(part.text) ? 'We are grateful to our community.' : (state.claims.find(c=>c.status==='approved'&&/hydration/i.test(c.wording))?.wording || 'Explore our daily skincare routine.');
+    } else if (!oldClaim && /\b(clinically proven|clinically tested|guarantee(?:d)?|erase|cure|permanent|100%|\d[\d,]*\+?\s*(?:customers|families|users|people|days?|weeks?|months?))\b/i.test(part.text)) {
+      const suggestion=/\b(customer|family|families|users|people)\b/i.test(part.text) ? 'We are grateful to our community.' : 'Explore our latest products.';
       findings.push(makeFinding({type:'Claim needs evidence',category:'claim',severity:'high',quote:part.text,sourceId:sourceFact?.id,reason:'This sentence makes a performance, timeframe or quantified claim. The linked source must support the exact result and scope before use.',suggestion}));
     }
     const banned=part.text.match(/\b(whitening|bleaching)\b/i);
@@ -146,7 +155,7 @@ async function runReview() {
   const draft=$('#draft-text').value.trim();
   if (!draft) return toast('Add draft text before running a review.',true);
   state.draft=draft; state.draftName=$('#draft-name').value.trim() || 'Untitled draft';
-  state.findings=deterministicReview(draft); state.reviews+=1; state.reviewed=true;
+  state.findings=deterministicReview(draft); state.reviews+=1; state.reviewed=true; state.reviewedDraft=draft; state.reviewedSignature=reviewSignature();
   audit('Draft reviewed',`${state.findings.length} deterministic finding(s) created for “${state.draftName}”.`);
   renderAll();
   $('#ai-status').innerHTML = config.ollamaReady ? '<i></i> Adding optional Qwen review…' : '<i></i> Rule checks active';
@@ -238,7 +247,7 @@ document.addEventListener('click',async event=>{
  const delSource=event.target.closest('[data-delete-source]');if(delSource){const sourceId=delSource.dataset.deleteSource;if(state.claims.some(c=>c.sourceId===sourceId))return toast('Remove or update linked claims first.',true);if(confirm('Remove this source from the demo workspace?')){state.sources=state.sources.filter(s=>s.id!==sourceId);audit('Source removed','A source was removed from this workspace.');renderAll();}return;}
  const delClaim=event.target.closest('[data-delete-claim]');if(delClaim&&confirm('Remove this claim from the ledger?')){state.claims=state.claims.filter(c=>c.id!==delClaim.dataset.deleteClaim);audit('Claim removed','A claim was removed from the ledger.');renderAll();return;}
  if(event.target.closest('#clear-activity')&&confirm('Clear the local activity log?')){state.audit=[];renderAll();return;}
- if(event.target.closest('#approve-button')){const unresolved=state.findings.some(f=>['open','escalated'].includes(f.status));if(unresolved)return toast('Resolve or dismiss each finding before approval.',true);if(confirm('Record a human approval for this draft version?')){state.approvals+=1;audit('Draft approved by workspace owner',`Human approval recorded for “${state.draftName}”.`);renderAll();toast('Human approval recorded. Nothing was published.');}return;}
+ if(event.target.closest('#approve-button')){if(!reviewIsCurrent())return toast('The draft changed. Run review again before approval.',true);const unresolved=state.findings.some(f=>['open','escalated'].includes(f.status));if(unresolved)return toast('Resolve or dismiss each finding before approval.',true);if(confirm('Record a human approval for this draft version?')){state.approvals+=1;audit('Draft approved by workspace owner',`Human approval recorded for “${state.draftName}”.`);renderAll();toast('Human approval recorded. Nothing was published.');}return;}
 });
 
 document.addEventListener('submit',async event=>{
@@ -263,9 +272,9 @@ document.addEventListener('submit',async event=>{
  }
 });
 
-$('#draft-text').addEventListener('input',()=>{state.draft=$('#draft-text').value;state.draftName=$('#draft-name').value;updateCharCount();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
+$('#draft-text').addEventListener('input',()=>{state.draft=$('#draft-text').value;state.draftName=$('#draft-name').value;updateCharCount();renderFindings();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
 $('#draft-name').addEventListener('input',()=>{state.draftName=$('#draft-name').value;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
-$('#file-input').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;try{state.draft=await file.text();state.draftName=file.name.replace(/\.(txt|md)$/i,'');$('#draft-text').value=state.draft;$('#draft-name').value=state.draftName;updateCharCount();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));toast(`${file.name} imported. Run review to check the text.`);}catch{toast('Could not read this text file.',true);}event.target.value='';});
+$('#file-input').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>120000){toast('This file is too large. Import a text file under 120 KB.',true);event.target.value='';return;}try{const imported=await file.text();if(imported.length>30000){toast('This file is longer than the 30,000 character draft limit.',true);event.target.value='';return;}state.draft=imported;state.draftName=file.name.replace(/\.(txt|md)$/i,'');$('#draft-text').value=state.draft;$('#draft-name').value=state.draftName;updateCharCount();renderFindings();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));toast(`${file.name} imported. Run review to check the text.`);}catch{toast('Could not read this text file.',true);}event.target.value='';});
 modal.addEventListener('click',event=>{if(event.target===modal)closeModal();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)closeModal();});
 

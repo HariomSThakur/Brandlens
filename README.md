@@ -25,9 +25,9 @@ node server.mjs
 3. Inspect the exact draft text, the linked source, the reason and a suggested edit.
 4. Accept an edit, edit the draft, escalate, dismiss a non-claim finding with a reason, or resolve a claim with a source and reason.
 5. Record human approval only after every finding has a recorded decision. Approval is recorded in the audit log; the app does not publish.
-6. Add sources and approved claims, view the activity log, and export a JSON backup.
+6. Add sources and approved claims, view the activity log, and export a JSON backup. Reviews are tied to the exact draft and evidence set; changing either requires a fresh review before approval.
 
-DOCX/image parsing and automated image recognition are not included in this MVP. The text import supports plain text and Markdown.
+DOCX/image parsing and automated image recognition are not included in this MVP. The text import supports plain text and Markdown, with a 30,000-character draft limit.
 
 ## Optional Supabase sync
 
