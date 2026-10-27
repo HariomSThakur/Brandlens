@@ -25,7 +25,7 @@ node server.mjs
 3. Inspect the exact draft text, the linked source, the reason and a suggested edit.
 4. Accept an edit, edit the draft, escalate, dismiss a non-claim finding with a reason, or resolve a claim with a source and reason.
 5. Record human approval only after every finding has a recorded decision. Approval is recorded in the audit log; the app does not publish.
-6. Add sources and approved claims, view the activity log, and export a JSON backup. Reviews are tied to the exact draft and evidence set; changing either requires a fresh review before approval.
+6. Browse facts and rules, add approved claims, view the activity log, manage shared team access with Admin/Reviewer/Creator roles, choose Light/Dark/Dark blue themes, and export a JSON backup. Reviews are tied to the exact draft and evidence set; changing either requires a fresh review before approval.
 
 DOCX/image parsing and automated image recognition are not included in this MVP. The text import supports plain text and Markdown, with a 30,000-character draft limit.
 
@@ -33,7 +33,7 @@ DOCX/image parsing and automated image recognition are not included in this MVP.
 
 Follow [`docs/supabase-setup.md`](docs/supabase-setup.md) for the complete dashboard, SQL, local `.env`, account, and verification steps.
 
-The app uses Supabase Auth and the REST API. Row-level security limits each authenticated user to their own workspace snapshot. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
+The app uses Supabase Auth and role-checked RPCs for shared workspace sync, membership, and invitations. Database policies protect workspace state. Admins invite Reviewers or Creators; invitation emails must be shared out of band. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
 
 ## Optional Qwen review through Ollama
 
@@ -48,7 +48,7 @@ The repository includes `render.yaml` for a Node web service. Connect this direc
 ## Round 2 plan changes
 
 - The MVP uses a small Node.js built-in HTTP server and browser JavaScript instead of introducing a frontend framework and package-install step during the short build window.
-- The MVP stores the workspace as one owner-scoped JSONB snapshot in Supabase; local mode uses browser storage. The schema keeps user data isolated with row-level security.
+- The MVP stores a shared workspace as a JSONB snapshot in Supabase. Admin, Reviewer, and Creator membership is role-checked by database RPCs and row-level security; local mode uses browser storage.
 - MVP imports `.txt` and `.md`; DOCX extraction, automated visual checks and richer integrations are deferred.
 - The model call is optional and server-side. Deterministic rules are the reliable baseline.
 
@@ -62,7 +62,7 @@ The repository includes `render.yaml` for a Node web service. Connect this direc
 
 - The bundled workspace is fictional and contains no real brand data.
 - Local storage is limited to the current browser profile and is not encrypted by this app.
-- Cloud accounts use Supabase Auth and owner-scoped row-level security.
+- Cloud accounts use Supabase Auth, shared workspace membership, role-checked write RPCs, and row-level security. Invites are recorded in Supabase but not emailed automatically.
 - Model output is advisory, checked against the submitted draft, and never approves or publishes.
 - Deterministic checks can miss claims or raise false alarms; a human reviewer remains responsible.
 - This MVP is not legal advice and does not establish that a claim is true.

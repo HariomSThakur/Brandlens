@@ -19,8 +19,9 @@
       <div class="nav-label">WORKSPACE</div>
       <nav class="nav-list">
         <button class="nav-item active" data-page="review"><span class="nav-icon">◉</span>Review draft <span class="nav-count" id="open-count">0</span></button>
-        <button class="nav-item" data-page="sources"><span class="nav-icon">▤</span>Source library <span class="nav-count" id="source-count">0</span></button>
-        <button class="nav-item" data-page="claims"><span class="nav-icon">✓</span>Claim ledger <span class="nav-count" id="claim-count">0</span></button>
+        <button class="nav-item" data-page="sources"><span class="nav-icon">▤</span>Facts &amp; rules <span class="nav-count" id="source-count">0</span></button>
+        <button class="nav-item" data-page="claims"><span class="nav-icon">✓</span>Approved claims <span class="nav-count" id="claim-count">0</span></button>
+        <button class="nav-item" data-page="team"><span class="nav-icon">♙</span>Team</button>
         <button class="nav-item" data-page="activity"><span class="nav-icon">◷</span>Activity log</button>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -32,7 +33,7 @@
       <header class="topbar"><div class="crumb"><span>Workspace</span><span class="slash">/</span><b id="crumb-page">Review draft</b></div><div class="top-actions"><span class="storage-pill" id="storage-status"><i></i> Local demo</span><button class="button button-quiet button-small" id="export-button">Export backup</button><button class="button button-dark button-small" id="sync-button">Connect Supabase</button></div></header>
 
       <section class="page active" id="page-review" aria-labelledby="page-title">
-        <div class="page-heading"><div><div class="eyebrow">BRAND CONTENT REVIEW</div><h1 id="page-title">Review before you publish.</h1><p>Check a draft against your approved facts, claims and writing rules.</p></div><div class="heading-meta"><span class="pulse-dot"></span> Drafts stay private in this browser</div></div>
+        <div class="page-heading"><div><div class="eyebrow">BRAND CONTENT REVIEW</div><h1 id="page-title">Review before you publish.</h1><p>Check a draft against your approved facts, claims and writing rules.</p></div><div class="heading-meta" id="workspace-hint"><span class="pulse-dot"></span> Drafts stay private in this browser</div></div>
         <div class="stats-grid" id="stats-grid"></div>
         <div class="review-layout">
           <section class="panel editor-panel" aria-labelledby="draft-title">
@@ -52,17 +53,17 @@
             <div class="review-summary" id="review-summary" hidden></div>
           </section>
         </div>
-        <section class="panel source-strip"><div class="source-strip-title"><div><div class="section-kicker">YOUR APPROVED MATERIALS</div><h2>Review uses these sources</h2></div><button class="text-button" data-page="sources">Manage sources →</button></div><div id="source-preview" class="source-preview"></div></section>
+        <section class="panel source-strip"><div class="source-strip-title"><div><div class="section-kicker">YOUR APPROVED MATERIALS</div><h2>Facts and rules checked during review</h2></div><button class="text-button" data-page="sources">Browse facts &amp; rules →</button></div><div id="source-preview" class="source-preview"></div></section>
       </section>
 
       <section class="page" id="page-sources" aria-labelledby="sources-title">
-        <div class="page-heading"><div><div class="eyebrow">KNOWLEDGE BASE</div><h1 id="sources-title">Source library</h1><p>Keep approved guidance and evidence versioned and easy to inspect.</p></div><button class="button button-primary" id="add-source">+ Add source</button></div>
+        <div class="page-heading"><div><div class="eyebrow">KNOWLEDGE BASE</div><h1 id="sources-title">Facts &amp; rules</h1><p>Browse the approved facts, evidence, and writing rules BrandLens uses during review.</p></div><button class="button button-primary" id="add-source">+ Add source</button></div>
         <div class="notice-banner"><span>ⓘ</span><p><b>Demo materials are fictional.</b> Replace them with approved sources before using BrandLens for real content.</p></div>
         <div id="sources-list" class="resource-grid"></div>
       </section>
 
       <section class="page" id="page-claims" aria-labelledby="claims-title">
-        <div class="page-heading"><div><div class="eyebrow">APPROVED CLAIMS</div><h1 id="claims-title">Claim ledger</h1><p>Track the wording, evidence owner and expiry for claims that are cleared for reuse.</p></div><button class="button button-primary" id="add-claim">+ Add approved claim</button></div>
+        <div class="page-heading"><div><div class="eyebrow">APPROVED CLAIMS</div><h1 id="claims-title">Approved claims</h1><p>Track the wording, evidence owner and expiry for claims that are cleared for reuse.</p></div><button class="button button-primary" id="add-claim">+ Add approved claim</button></div>
         <div class="notice-banner"><span>ⓘ</span><p>Expired evidence is surfaced for review. Missing evidence never means a claim is automatically false.</p></div>
         <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>APPROVED WORDING</th><th>SOURCE</th><th>OWNER</th><th>REVIEW DATE</th><th>STATUS</th><th></th></tr></thead><tbody id="claims-table"></tbody></table></div></div>
       </section>
@@ -72,10 +73,16 @@
         <div id="activity-list" class="panel activity-list"></div>
       </section>
 
+      <section class="page" id="page-team" aria-labelledby="team-title">
+        <div class="page-heading"><div><div class="eyebrow">SHARED WORKSPACE</div><h1 id="team-title">Team access</h1><p>Invite collaborators and assign the access they need.</p></div></div>
+        <div id="team-content" class="team-layout"></div>
+      </section>
+
       <section class="page" id="page-settings" aria-labelledby="settings-title">
         <div class="page-heading"><div><div class="eyebrow">WORKSPACE CONTROL</div><h1 id="settings-title">Settings</h1><p>Choose where your workspace data lives and how optional AI review is used.</p></div></div>
         <div class="settings-grid">
-          <div class="panel setting-card"><div class="setting-icon teal">▤</div><h2>Storage and privacy</h2><p id="storage-description">Local demo mode stores your workspace in this browser only. No account or cloud sync is active.</p><button class="button button-outline" id="settings-sync">Configure Supabase</button><button class="button button-outline" id="reset-demo">Reset fictional workspace</button><p class="fine-print">For cloud sync, add your Supabase project URL and public anon key to <code>.env</code>, then apply the provided schema. Never put a service-role key in this app.</p></div>
+          <div class="panel setting-card"><div class="setting-icon teal">◐</div><h2>Appearance</h2><p>Choose a theme for this browser. Your choice is saved on this device.</p><label class="theme-setting" for="theme-select">Color theme<select id="theme-select" class="theme-select"><option value="light">Light</option><option value="dark">Dark</option><option value="blue">Dark blue</option></select></label></div>
+          <div class="panel setting-card"><div class="setting-icon teal">▤</div><h2>Storage and privacy</h2><p id="storage-description">Local demo mode stores your workspace in this browser only. No account or cloud sync is active.</p><button class="button button-outline" id="settings-sync">Configure Supabase</button><button class="button button-outline" id="reset-demo">Reset fictional workspace</button><p class="fine-print">For cloud sync, add your Supabase project URL and publishable key to <code>.env</code>, then apply the provided schema. Never put a service-role key in this app.</p></div>
           <div class="panel setting-card"><div class="setting-icon violet">✳</div><h2>Optional Qwen review</h2><p id="model-description">Deterministic checks work without a model. An Ollama-hosted Qwen model can add advisory tone review when configured on the server.</p><span class="setting-chip" id="model-chip">Rule checks only</span><p class="fine-print">Model suggestions are advisory, validated against the submitted draft, and never approve or publish content.</p></div>
           <div class="panel setting-card wide"><div class="setting-icon gold">◈</div><h2>Confidentiality modes</h2><div class="mode-list"><div><b>Synthetic data only</b><span>Use the included fictional workspace.</span></div><div><b>Local model</b><span>Optional review requests stay on your machine when your Ollama endpoint is local.</span></div><div><b>Remote model</b><span>Configure only after reviewing the host's retention terms. The app sends the draft and relevant excerpts, not the full library.</span></div></div></div>
         </div>

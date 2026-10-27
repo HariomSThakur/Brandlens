@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'brandlens.round2.workspace.v1';
 const SESSION_KEY = 'brandlens.supabase.session.v1';
+const THEME_KEY = 'brandlens.theme.v1';
 const today = new Date().toISOString().slice(0, 10);
 const id = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 const iso = () => new Date().toISOString();
@@ -29,17 +30,31 @@ const reviewSignature = () => JSON.stringify([state.draft, state.sources.map(({i
 state.reviewedSignature ??= state.reviewed ? reviewSignature() : null;
 let config = {supabaseUrl:'',supabaseAnonKey:'',ollamaReady:false,ollamaModel:''};
 let session = null;
+let workspaceId = null;
+let workspaceName = "";
+let workspaceRole = null;
+let teamRequestVersion = 0;
 try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch {}
 let page = 'review';
 let pendingAction = null;
 const $ = selector => document.querySelector(selector);
 const modal = $('#modal-backdrop');
+function setTheme(theme) {
+  const value = ['light','dark','blue'].includes(theme) ? theme : 'light';
+  document.documentElement.dataset.theme = value;
+  localStorage.setItem(THEME_KEY, value);
+  const selector = $('#theme-select'); if (selector) selector.value = value;
+  const colors = {light:'#f5f8f8',dark:'#0d1217',blue:'#0b1424'};
+  $('meta[name=theme-color]')?.setAttribute('content', colors[value]);
+}
+try { setTheme(localStorage.getItem(THEME_KEY) || 'light'); } catch { setTheme('light'); }
 
 function audit(action, detail) { state.audit.unshift({id:id(),action,detail,at:iso()}); state.audit = state.audit.slice(0,250); }
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   $('#storage-status').innerHTML = `<i></i> ${session ? 'Supabase connected' : 'Local demo'}`;
-  $('#storage-description').textContent = session ? `Signed in as ${session.user?.email || 'workspace owner'}. Use Sync to save this browser's workspace to Supabase.` : 'Local demo mode stores your workspace in this browser only. No account or cloud sync is active.';
+  $('#storage-description').textContent = session ? `Signed in as ${session.user?.email || 'workspace member'} (${workspaceRole || 'loading role'}). Use Sync workspace to save changes for the shared team.` : 'Local demo mode stores your workspace in this browser only. No account or cloud sync is active.';
+  const hint=$('#workspace-hint'); if(hint) hint.innerHTML=`<span class="pulse-dot"></span> ${session&&workspaceId?'Shared with your workspace team':'Drafts stay private in this browser'}`;
 }
 function sourceById(sourceId) { return state.sources.find(item => item.id === sourceId); }
 function openFindings() { return state.findings.filter(f => f.status === 'open' || f.status === 'escalated'); }
@@ -86,7 +101,7 @@ function findingCard(f) {
   let actions = '';
   if (actionable) {
     actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${f.id}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${f.id}">Edit draft</button>`;
-    if (isClaim) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${f.id}">Resolve with evidence</button>`;
+    if (isClaim && canManageLibrary()) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${f.id}">Resolve with evidence</button>`;
     actions += `<button class="mini-action" data-finding-action="escalate" data-id="${f.id}">Escalate</button>`;
     if (!isClaim) actions += `<button class="mini-action" data-finding-action="dismiss" data-id="${f.id}">Dismiss</button>`;
   }
@@ -98,18 +113,35 @@ function renderFindings() {
   $('#findings-empty').hidden = state.findings.length > 0;
   const summary = $('#review-summary');
   if (state.reviewed) {
-    const canApprove = state.findings.every(f => !['open','escalated'].includes(f.status));
+    const canApprove = (!session || ['admin','reviewer'].includes(workspaceRole)) && state.findings.every(f => !['open','escalated'].includes(f.status));
     const current = reviewIsCurrent();
     summary.hidden = false;
-    const message = !current ? 'The draft changed after this review. Run review again before approval.' : canApprove ? 'All findings have a recorded decision. A person can record approval.' : `${openFindings().length} finding${openFindings().length===1?'':'s'} still need a decision before approval.`;
+    const message = !current ? 'The draft changed after this review. Run review again before approval.' : session && workspaceRole === 'creator' ? 'A Reviewer or Admin must record approval for this draft.' : canApprove ? 'All findings have a recorded decision. A person can record approval.' : `${openFindings().length} finding${openFindings().length===1?'':'s'} still need a decision before approval.`;
     summary.innerHTML = `<div>${message}</div><button class="button button-small ${canApprove&&current?'button-primary':'button-outline'}" id="approve-button" ${canApprove&&current?'':'disabled'}>Record human approval</button>`;
   } else { summary.hidden = true; summary.textContent=''; }
 }
 function renderActivity() {
   $('#activity-list').innerHTML = state.audit.length ? state.audit.map(item=>`<article class="activity-item"><div class="activity-icon">✓</div><div><b>${esc(item.action)}</b><p>${esc(item.detail)}</p></div><time>${new Date(item.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></article>`).join('') : '<div class="empty-table">No decisions recorded yet.</div>';
 }
+function canManageLibrary() { return !session || ['admin','reviewer'].includes(workspaceRole); }
+async function renderTeam() {
+  const node = $('#team-content'); if (!node) return;
+  const request = ++teamRequestVersion;
+  if (!session) { node.innerHTML = '<div class="panel team-card"><h2>Sign in to manage workspace access</h2><p>Connect Supabase and sign in. Each collaborator uses their own account.</p><button class="button button-primary" data-page="settings">Open settings</button></div>'; return; }
+  if (!workspaceId) { node.innerHTML = '<div class="panel team-card"><h2>Workspace not loaded</h2><p>Sync your workspace first to load team permissions.</p></div>'; return; }
+  if (workspaceRole !== 'admin') { node.innerHTML = `<div class="panel team-card"><span class="role-badge">${esc(workspaceRole || 'member')}</span><h2>Your workspace role</h2><p>${workspaceRole === 'reviewer' ? 'You can review drafts, maintain approved facts and claims, and record decisions.' : 'You can write and review drafts, accept suggested edits, and escalate findings. Approved facts, claims, and approvals are managed by Admins and Reviewers.'}</p><p class="fine-print">Ask a workspace Admin to manage invitations or membership.</p></div>`; return; }
+  node.innerHTML = '<div class="panel team-card"><h2>Loading team…</h2></div>';
+  try {
+    const result = await rpcRequest('list_brandlens_team', {p_workspace_id: workspaceId});
+    if (request !== teamRequestVersion) return;
+    const members = result.members || [], invites = result.invitations || [];
+    node.innerHTML = `<div class="panel team-card"><div class="panel-head"><div><div class="section-kicker">INVITE COLLABORATORS</div><h2>Workspace team</h2></div><span class="role-badge">Admin</span></div><form id="invite-form" class="invite-form"><label>Email address<input name="email" type="email" required placeholder="teammate@example.com"></label><label>Role<select name="role"><option value="reviewer">Reviewer</option><option value="creator">Creator</option></select></label><button class="button button-primary">Create invite</button></form><p class="fine-print">Supabase stores the invite but does not send email. Share the invite with the person; they must create/sign in using this exact email. Each account can join one BrandLens workspace in this version.</p></div><div class="panel team-card"><div class="section-kicker">CURRENT MEMBERS</div><h2>People with access</h2><div class="team-list">${members.map(m=>`<div class="team-row"><div class="team-avatar">${esc((m.email||'User').slice(0,1).toUpperCase())}</div><div class="team-person"><b>${esc(m.email||'Account')}</b><small>${fmtDate(m.created_at)}</small></div><span class="role-badge">${esc(m.role)}</span>${m.role==='admin'?'<span class="fine-print">Owner</span>':`<button class="danger-button" data-remove-member="${esc(m.user_id)}">Remove</button>`}</div>`).join('')||'<p class="fine-print">No members yet.</p>'}</div>${invites.length?`<div class="section-kicker invite-heading">PENDING INVITES</div><div class="team-list">${invites.map(i=>`<div class="team-row"><div class="team-person"><b>${esc(i.email)}</b><small>Created ${fmtDate(i.created_at)}</small></div><span class="role-badge">${esc(i.role)}</span></div>`).join('')}</div>`:''}</div>`;
+  } catch(error) { if (request === teamRequestVersion) node.innerHTML = `<div class="panel team-card"><h2>Could not load team</h2><p>${esc(error.message)}</p></div>`; }
+}
 function renderAll({draft=false}={}) {
-  renderStats(); renderSources(); renderClaims(); renderFindings(); renderActivity();
+  renderStats(); renderSources(); renderClaims(); renderFindings(); renderActivity(); renderTeam();
+  $('#add-source').hidden = !canManageLibrary(); $('#add-claim').hidden = !canManageLibrary();
+  $('#clear-activity').hidden = Boolean(session && workspaceRole !== 'admin');
   if (draft) { $('#draft-name').value = state.draftName; $('#draft-text').value = state.draft; updateCharCount(); }
   save();
 }
@@ -121,7 +153,7 @@ function go(next) {
   page = next;
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id===`page-${next}`));
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===next));
-  const names = {review:'Review draft',sources:'Source library',claims:'Claim ledger',activity:'Activity log',settings:'Settings'};
+  const names = {review:'Review draft',sources:'Facts & rules',claims:'Approved claims',activity:'Activity log',settings:'Settings',team:'Team'};
   $('#crumb-page').textContent = names[next] || 'Review draft';
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -205,17 +237,26 @@ async function authRequest(pathname,body){
  const response=await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/${pathname}`,{method:'POST',headers:{apikey:config.supabaseAnonKey,'content-type':'application/json'},body:JSON.stringify(body)});
  const data=await response.json();if(!response.ok)throw new Error(data.msg||data.message||data.error_description||'Supabase authentication failed.');return data;
 }
-async function syncWorkspace(){
+async function rpcRequest(name,args={}) {
+ const response=await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/rest/v1/rpc/${name}`,{method:'POST',headers:sessionHeaders({'content-type':'application/json'}),body:JSON.stringify(args)});
+ const text=await response.text(); let data=null; try{data=text?JSON.parse(text):null;}catch{}
+ if(!response.ok)throw new Error(data?.message||data?.details||data?.hint||'Supabase request failed. Apply the latest supabase/schema.sql and try again.');
+ return data;
+}
+async function syncWorkspace(mode='load'){
  if(!config.supabaseUrl||!config.supabaseAnonKey)return authModal();
  if(!session)return authModal();
  try{
-  const base=config.supabaseUrl.replace(/\/$/,'');
-  const q=`${base}/rest/v1/workspace_state?owner_id=eq.${encodeURIComponent(session.user.id)}&select=payload&limit=1`;
-  const get=await fetch(q,{headers:sessionHeaders()});if(!get.ok)throw new Error('Could not load cloud data. Check that the Supabase schema and access policies are installed.');
-  const rows=await get.json();
-  if(rows.length){state={...sampleState(),...rows[0].payload};audit('Workspace synced from Supabase','Cloud workspace loaded into this browser.');}
-  else {const up=await fetch(`${base}/rest/v1/workspace_state?on_conflict=owner_id`,{method:'POST',headers:sessionHeaders({'content-type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({owner_id:session.user.id,payload:state,updated_at:iso()})});if(!up.ok)throw new Error('Could not save workspace. Check Supabase table permissions.');audit('Workspace synced to Supabase','Local demo workspace saved to your account.');}
-  renderAll({draft:true});toast(rows.length?'Workspace loaded from Supabase.':'Workspace saved to Supabase.');
+  if(mode==='save' && workspaceId){ await rpcRequest('save_brandlens_workspace',{p_workspace_id:workspaceId,p_payload:state}); audit('Workspace synced to Supabase','Current browser workspace saved to the shared workspace.'); }
+  const cloud=await rpcRequest('get_or_create_brandlens_workspace',{p_name:state.workspace||'BrandLens Workspace',p_initial_payload:state});
+  workspaceId=cloud.workspace_id; workspaceName=cloud.workspace_name||'BrandLens Workspace'; workspaceRole=cloud.role;
+  if(mode!=='save' || !workspaceId) state={...sampleState(),...(cloud.payload||{})};
+  state.workspace=workspaceName;
+  const ws=$('.side-workspace'); if(ws) ws.innerHTML=`<span class="workspace-dot"></span><span><b>${esc(workspaceName)}</b><small>${esc(workspaceRole)} workspace</small></span><span class="chevron">⌄</span>`;
+  const profile=$('.profile-row'); if(profile){profile.querySelector('b').textContent=session.user?.email||'Signed-in member';profile.querySelector('small').textContent=`${workspaceRole} · shared workspace`;}
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+  audit(mode==='save'?'Workspace synced to Supabase':'Workspace loaded from Supabase',mode==='save'?'Shared workspace is up to date.':'Cloud workspace loaded into this browser.');
+  renderAll({draft:true}); toast(mode==='save'?'Workspace saved to Supabase.':'Workspace loaded from Supabase.');
  }catch(error){toast(error.message,true);}
 }
 async function exportBackup(){
@@ -223,54 +264,63 @@ async function exportBackup(){
 }
 
 $('#draft-text').value=state.draft||'';$('#draft-name').value=state.draftName||'';updateCharCount();renderAll();
-fetch('/api/config').then(r=>r.json()).then(data=>{config=data; if(data.ollamaReady){$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session)$('#storage-status').innerHTML='<i></i> Supabase connected';}).catch(()=>{});
+fetch('/api/config').then(r=>r.json()).then(async data=>{config=data; if(data.ollamaReady){$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session){$('#storage-status').innerHTML='<i></i> Supabase connected';if(data.supabaseUrl&&data.supabaseAnonKey)await syncWorkspace('load');}}).catch(()=>{});
 
 document.addEventListener('click',async event=>{
  const pageButton=event.target.closest('[data-page]');if(pageButton){go(pageButton.dataset.page);return;}
  if(event.target.closest('#review-button')){await runReview();return;}
  if(event.target.closest('#add-source')){addSourceModal();return;}
  if(event.target.closest('#add-claim')){addClaimModal();return;}
- if(event.target.closest('#sync-button')||event.target.closest('#settings-sync')){if(session)await syncWorkspace();else authModal();return;}
+ if(event.target.closest('#sync-button')||event.target.closest('#settings-sync')){if(session)await syncWorkspace('save');else authModal();return;}
  if(event.target.closest('#export-button')){await exportBackup();return;}
  if(event.target.closest('#reset-demo')){if(confirm('Reset this browser to the fictional Luma Botanics demo workspace? This replaces its current local data.')){state=sampleState();renderAll({draft:true});go('review');toast('Fictional demo workspace restored.');}return;}
  if(event.target.closest('#modal-close')||event.target.closest('[data-modal-close]')){closeModal();return;}
  if(event.target.closest('[data-auth-signup]')){const form=$('#auth-form');const data=Object.fromEntries(new FormData(form));try{const result=await authRequest('signup',{email:data.email,password:data.password});if(result.access_token){session=result;sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();toast('Account created.');await syncWorkspace();}else toast('Check your email to confirm the account, then sign in.');}catch(error){toast(error.message,true);}return;}
  if(event.target.closest('#account-button')){
-  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
+  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;workspaceId=null;workspaceRole=null;workspaceName='';sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
   else if(!session)go('settings');return;
  }
- const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;
+ const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;if(session&&action==='resolve'&&!canManageLibrary())return toast('Only Admins and Reviewers can resolve findings.',true);if(session&&action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed.',true);
   if(action==='apply'){const start=state.draft.indexOf(f.quote);if(start<0)return toast('The quoted text has changed; run the review again.',true);state.draft=state.draft.slice(0,start)+f.suggestion+state.draft.slice(start+f.quote.length);f.status='updated';f.resolutionReason='Creator accepted the suggested edit.';audit('Suggested edit accepted',`${f.type}: “${f.quote}” was replaced in the draft.`);renderAll({draft:true});return toast('Suggested edit applied. Run another review before approval.');}
   if(action==='edit'){go('review');$('#draft-text').focus();$('#draft-text').scrollIntoView({behavior:'smooth',block:'center'});return;}
   actionModal(action,f);return;
  }
- const delSource=event.target.closest('[data-delete-source]');if(delSource){const sourceId=delSource.dataset.deleteSource;if(state.claims.some(c=>c.sourceId===sourceId))return toast('Remove or update linked claims first.',true);if(confirm('Remove this source from the demo workspace?')){state.sources=state.sources.filter(s=>s.id!==sourceId);audit('Source removed','A source was removed from this workspace.');renderAll();}return;}
- const delClaim=event.target.closest('[data-delete-claim]');if(delClaim&&confirm('Remove this claim from the ledger?')){state.claims=state.claims.filter(c=>c.id!==delClaim.dataset.deleteClaim);audit('Claim removed','A claim was removed from the ledger.');renderAll();return;}
+ const delSource=event.target.closest('[data-delete-source]');if(delSource){if(session&&!canManageLibrary())return toast('Only Admins and Reviewers can change approved facts and rules.',true);const sourceId=delSource.dataset.deleteSource;if(state.claims.some(c=>c.sourceId===sourceId))return toast('Remove or update linked claims first.',true);if(confirm('Remove this source from the demo workspace?')){state.sources=state.sources.filter(s=>s.id!==sourceId);audit('Source removed','A source was removed from this workspace.');renderAll();}return;}
+ const delClaim=event.target.closest('[data-delete-claim]');if(delClaim&&session&&!canManageLibrary())return toast('Only Admins and Reviewers can change approved claims.',true);if(delClaim&&confirm('Remove this claim from the ledger?')){state.claims=state.claims.filter(c=>c.id!==delClaim.dataset.deleteClaim);audit('Claim removed','A claim was removed from the ledger.');renderAll();return;}
+ const removeMember=event.target.closest('[data-remove-member]');if(removeMember&&confirm('Remove this member from the shared workspace?')){try{await rpcRequest('remove_brandlens_member',{p_workspace_id:workspaceId,p_user_id:removeMember.dataset.removeMember});audit('Workspace member removed','A member lost access to this workspace.');await renderTeam();toast('Member removed.');}catch(error){toast(error.message,true);}return;}
  if(event.target.closest('#clear-activity')&&confirm('Clear the local activity log?')){state.audit=[];renderAll();return;}
- if(event.target.closest('#approve-button')){if(!reviewIsCurrent())return toast('The draft changed. Run review again before approval.',true);const unresolved=state.findings.some(f=>['open','escalated'].includes(f.status));if(unresolved)return toast('Resolve or dismiss each finding before approval.',true);if(confirm('Record a human approval for this draft version?')){state.approvals+=1;audit('Draft approved by workspace owner',`Human approval recorded for “${state.draftName}”.`);renderAll();toast('Human approval recorded. Nothing was published.');}return;}
+ if(event.target.closest('#approve-button')){if(session&&workspaceRole==='creator')return toast('Creators cannot record approvals. Ask a Reviewer or Admin.',true);if(!reviewIsCurrent())return toast('The draft changed. Run review again before approval.',true);const unresolved=state.findings.some(f=>['open','escalated'].includes(f.status));if(unresolved)return toast('Resolve or dismiss each finding before approval.',true);if(confirm('Record a human approval for this draft version?')){state.approvals+=1;audit('Draft approved by workspace owner',`Human approval recorded for “${state.draftName}”.`);renderAll();toast('Human approval recorded. Nothing was published.');}return;}
 });
 
 document.addEventListener('submit',async event=>{
  event.preventDefault();const form=event.target;const data=Object.fromEntries(new FormData(form));
  if(form.id==='source-form'){
+  if(session&&!canManageLibrary())return toast('Only Admins and Reviewers can change approved facts and rules.',true);
   state.sources.unshift({id:id(),title:data.title.trim(),type:data.type,owner:data.owner.trim(),expiry:data.expiry||'',updated:iso(),content:data.content.trim()});audit('Source added',`“${data.title.trim()}” was added to the source library.`);closeModal();renderAll();toast('Approved source added.');return;
  }
  if(form.id==='claim-form'){
+  if(session&&!canManageLibrary())return toast('Only Admins and Reviewers can change approved claims.',true);
   state.claims.unshift({id:id(),wording:data.wording.trim(),sourceId:data.sourceId,owner:data.owner.trim(),reviewDate:data.reviewDate||'',status:'approved'});audit('Approved claim added',`“${data.wording.trim()}” was linked to a source.`);closeModal();renderAll();toast('Claim added to the ledger.');return;
  }
  if(form.id==='action-form'){
   const f=state.findings.find(x=>x.id===pendingAction?.findingId);if(!f)return closeModal();
   const action=pendingAction.action;
+  if(session&&action==='resolve'&&!canManageLibrary())return toast('Only Admins and Reviewers can resolve findings.',true);
   if(action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed by creators.',true);
   f.status=action==='dismiss'?'dismissed':action==='escalate'?'escalated':'resolved';f.resolutionReason=data.reason.trim();
   if(action==='resolve'){f.sourceId=data.sourceId;const source=sourceById(data.sourceId);f.sourceTitle=source?.title||'';f.sourceQuote=source?.content||'';}
   const actionLabel={dismiss:'Finding dismissed',escalate:'Finding escalated',resolve:'Finding resolved with evidence'}[action];audit(actionLabel,`${f.type}: ${f.resolutionReason}`);closeModal();renderAll();toast(`${actionLabel}.`);return;
  }
+ if(form.id==='invite-form'){
+  try{await rpcRequest('invite_brandlens_member',{p_workspace_id:workspaceId,p_email:data.email,p_role:data.role});audit('Workspace invite created',`${data.email} was invited as ${data.role}.`);await renderTeam();toast('Invite created. Share the exact email and sign-in instructions with your teammate.');}catch(error){toast(error.message,true);}return;
+ }
  if(form.id==='auth-form'){
-  try{session=await authRequest('token?grant_type=password',{email:data.email,password:data.password});sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();$('#sync-button').textContent='Sync workspace';$('#storage-status').innerHTML='<i></i> Supabase connected';toast('Signed in. Syncing workspace…');await syncWorkspace();}
+  try{session=await authRequest('token?grant_type=password',{email:data.email,password:data.password});sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();$('#sync-button').textContent='Sync workspace';$('#storage-status').innerHTML='<i></i> Supabase connected';toast('Signed in. Syncing workspace…');await syncWorkspace('load');}
   catch(error){toast(error.message,true);}return;
  }
 });
+
+$('#theme-select').addEventListener('change', event => setTheme(event.target.value));
 
 $('#draft-text').addEventListener('input',()=>{state.draft=$('#draft-text').value;state.draftName=$('#draft-name').value;updateCharCount();renderFindings();localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});
 $('#draft-name').addEventListener('input',()=>{state.draftName=$('#draft-name').value;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));});

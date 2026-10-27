@@ -1,62 +1,53 @@
 # Connect BrandLens to Supabase
 
-This adds email/password sign-in and syncs one workspace snapshot per signed-in user. Local browser storage remains available when Supabase is not configured.
+This setup enables email/password accounts, one shared workspace, and Admin, Reviewer, and Creator roles. Local browser mode remains available without Supabase.
 
 ## 1. Create a Supabase project
 
-1. Sign in at [supabase.com/dashboard](https://supabase.com/dashboard) and create a new project on the Free plan.
-2. Choose a project name and region. Save the database password somewhere safe; BrandLens does not need that password.
-3. Wait for the project to finish provisioning.
+Create a project at [supabase.com/dashboard](https://supabase.com/dashboard) and wait for provisioning to finish. BrandLens needs the Project URL and publishable key; it does not need the database password.
 
-## 2. Create the BrandLens table and row policies
+## 2. Apply the workspace schema
 
-1. Open the project's **SQL Editor** and choose **New query**.
-2. Open `supabase/schema.sql` in this repository and paste its contents into the query.
-3. Click **Run**. The script creates `public.workspace_state`, enables row-level security (RLS), grants signed-in users the required table operations, and limits each operation to the caller's own row.
-4. In **Table Editor**, confirm that `workspace_state` exists. Do not turn off RLS.
+1. Open the project **SQL Editor** and choose **New query**.
+2. Paste all of `supabase/schema.sql` and click **Run**.
+3. The script creates shared workspaces, membership, invitations, role-checked RPCs, and row-level security. Existing `workspace_state` payloads are migrated into workspaces and preserved. Do not delete the existing `workspace_state` table or the accidental empty `Brand len` table.
+4. If you already ran an older BrandLens schema, run this updated file in SQL Editor as a migration.
 
-## 3. Copy the project URL and publishable key
+## 3. Set up the app
 
-1. In the project dashboard, open **Connect** or **Settings → API Keys**.
-2. Copy the **Project URL** and the **publishable key** (`sb_publishable_...`). The key is intended for public app clients; RLS is what protects workspace rows.
-3. Never use a secret key (`sb_secret_...`) or legacy `service_role` key in BrandLens.
-
-## 4. Configure local BrandLens
-
-From PowerShell, in the `brandlens-round2` folder:
+In PowerShell from the `brandlens-round2` folder:
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Set these two lines in `.env`:
+Set the values below, then save the file:
 
 ```text
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 ```
 
-Save `.env`. It is ignored by Git; do not commit it. Restart the server with `npm start` after editing environment values. The server loads `.env` on startup.
+Never put a secret or service-role key in the app. Restart the server (`node server.mjs` or `npm start`) after changing `.env`, refresh `http://localhost:3000`, then sign in and press **Sync workspace**. The first Admin account creates the shared workspace and brings its local demo snapshot into Supabase. Later syncs save or load that shared state.
 
-## 5. Sign in and check sync
+## 4. Invite teammates
 
-1. Open BrandLens at `http://localhost:3000` and refresh the page.
-2. Click **Sign in to sync** (or **Connect Supabase**) and choose **Create account**.
-3. Use your email and a password of at least six characters. If Supabase requires email confirmation, confirm the email, return to BrandLens, then sign in.
-4. On the first sign-in, BrandLens saves the current local workspace to Supabase. Later syncs load the signed-in user's cloud workspace into this browser.
-5. In **Table Editor → workspace_state**, verify that one row appears with your user ID as `owner_id` and the workspace JSON under `payload`.
+1. Sign in as the workspace Admin and open **Team**.
+2. Enter the teammate's email, choose **Reviewer** or **Creator**, and create the invite.
+3. Supabase does not send an invitation email in this MVP. Share the instructions directly; the teammate must create or sign in to Supabase Auth using the exact invited email. They then open BrandLens and sync. The invite is accepted automatically.
+4. Each Supabase account can belong to one BrandLens workspace in this version. Invite the account before it creates a separate BrandLens workspace.
 
-The built-in email service on hosted projects is intended for testing and has recipient/rate limits. For a quick demo, use the email address associated with your Supabase organization. Do not disable email confirmation for a public deployment just to bypass email setup.
+Roles: **Admin** can manage membership and all workspace data. **Reviewer** can manage facts/rules and claims, resolve findings, and record approvals. **Creator** can work on drafts, accept suggested edits, and escalate findings; they cannot edit approved facts/rules or claims, resolve claims, or approve. Supabase RPC checks enforce important writes in the database as well as in the UI.
 
-## 6. Configure a deployed app (after hosting it)
+## 5. Appearance
 
-In the hosting provider's environment-variable settings, set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` to the same two values, then redeploy/restart. In Supabase **Authentication → URL Configuration**, set the Site URL to the deployed BrandLens URL and allow the local URL `http://localhost:3000/**` while you still use local development. Add the exact deployed URL to the redirect allow list as well. Supabase uses these settings for email confirmation redirects.
+Open **Settings → Appearance** to choose Light, Dark, or Dark blue. The choice is stored in that browser.
 
 ## Troubleshooting
 
-- **The button still says “Connect Supabase”:** check the variable names and restart the Node server; the app loads configuration when the page starts.
-- **Sign-up asks you to check email:** confirm it first, then use **Sign in**. Hosted email delivery may be limited on the Free plan's built-in test service.
-- **Sync says schema or permissions are missing:** rerun `supabase/schema.sql` in the SQL Editor and verify RLS is still enabled.
-- **Sync loads unexpected old data:** an existing cloud row takes precedence over the browser copy at sign-in. Export a JSON backup before testing if you need to preserve local changes.
-- **A free project was paused:** resume it in the Supabase dashboard before testing; inactive free projects can be paused.
+- **The sync button still says Connect Supabase:** check `.env` names and restart Node.
+- **Schema or permission error:** rerun the current `supabase/schema.sql` in SQL Editor and ensure RLS is enabled.
+- **Invite cannot be accepted:** confirm the signed-in email exactly matches the invitation. An account already attached to another workspace cannot join this workspace in the current version.
+- **Sign-up asks for email confirmation:** confirm the email, then sign in. Hosted test email delivery can be rate-limited.
+- **Local changes appear missing:** existing cloud data loads on sign-in. Export a JSON backup before testing if you need to preserve local-only changes.
