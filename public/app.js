@@ -33,6 +33,7 @@ let session = null;
 let workspaceId = null;
 let workspaceName = "";
 let workspaceRole = null;
+let workspaceRevision = null;
 let teamRequestVersion = 0;
 try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch {}
 let page = 'review';
@@ -76,13 +77,13 @@ function renderSources() {
   $('#source-preview').innerHTML = state.sources.slice(0,3).map(s=>`<article class="source-mini"><b>${esc(s.title)}</b><span>${esc(s.type)} · review by ${fmtDate(s.expiry)}</span></article>`).join('') || '<div class="empty-table">Add an approved source to start a review.</div>';
   $('#sources-list').innerHTML = state.sources.map(s=>{
     const expired = s.expiry && s.expiry < today;
-    return `<article class="panel resource-card"><div class="resource-head"><span class="resource-type">▤ &nbsp;${esc(s.type)}</span><button class="danger-button" data-delete-source="${s.id}" ${state.claims.some(c=>c.sourceId===s.id)?'disabled title="A claim uses this source"':''}>Remove</button></div><h2>${esc(s.title)}</h2><p>${esc(s.content)}</p><div class="resource-meta"><span>Owner: ${esc(s.owner || 'Unassigned')}</span><span class="${expired?'expired':''}">${expired?'Expired':'Review by'} ${fmtDate(s.expiry)}</span></div></article>`;
+    return `<article class="panel resource-card"><div class="resource-head"><span class="resource-type">▤ &nbsp;${esc(s.type)}</span><button class="danger-button" data-delete-source="${esc(s.id)}" ${state.claims.some(c=>c.sourceId===s.id)?'disabled title="A claim uses this source"':''}>Remove</button></div><h2>${esc(s.title)}</h2><p>${esc(s.content)}</p><div class="resource-meta"><span>Owner: ${esc(s.owner || 'Unassigned')}</span><span class="${expired?'expired':''}">${expired?'Expired':'Review by'} ${fmtDate(s.expiry)}</span></div></article>`;
   }).join('') || '<div class="panel empty-table">No sources yet. Add approved guidance or evidence.</div>';
 }
 function renderClaims() {
   $('#claims-table').innerHTML = state.claims.map(c=>{
     const source = sourceById(c.sourceId); const expired = c.status==='expired' || (c.reviewDate && c.reviewDate < today);
-    return `<tr><td>${esc(c.wording)}</td><td>${esc(source?.title || 'Source removed')}</td><td>${esc(c.owner || 'Unassigned')}</td><td>${fmtDate(c.reviewDate)}</td><td><span class="status-tag ${expired?'expired':''}">${expired?'Review required':'Approved'}</span></td><td><button class="danger-button" data-delete-claim="${c.id}">Remove</button></td></tr>`;
+    return `<tr><td>${esc(c.wording)}</td><td>${esc(source?.title || 'Source removed')}</td><td>${esc(c.owner || 'Unassigned')}</td><td>${fmtDate(c.reviewDate)}</td><td><span class="status-tag ${expired?'expired':''}">${expired?'Review required':'Approved'}</span></td><td><button class="danger-button" data-delete-claim="${esc(c.id)}">Remove</button></td></tr>`;
   }).join('') || '<tr><td colspan="6" class="empty-table">No approved claims yet. Add one with a linked source.</td></tr>';
 }
 function highlighted(draft, quote) {
@@ -100,10 +101,12 @@ function findingCard(f) {
   const statusLabel = actionable ? '' : `<span class="finding-status">${esc(f.status === 'updated' ? 'Edit accepted' : f.status)}</span>`;
   let actions = '';
   if (actionable) {
-    actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${f.id}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${f.id}">Edit draft</button>`;
-    if (isClaim && canManageLibrary()) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${f.id}">Resolve with evidence</button>`;
-    actions += `<button class="mini-action" data-finding-action="escalate" data-id="${f.id}">Escalate</button>`;
-    if (!isClaim) actions += `<button class="mini-action" data-finding-action="dismiss" data-id="${f.id}">Dismiss</button>`;
+    actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${esc(f.id)}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${esc(f.id)}">Edit draft</button>`;
+    if (isClaim && canManageLibrary()) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${esc(f.id)}">Resolve with evidence</button>`;
+    if (canManageLibrary()) {
+      actions += `<button class="mini-action" data-finding-action="escalate" data-id="${esc(f.id)}">Escalate</button>`;
+      if (!isClaim) actions += `<button class="mini-action" data-finding-action="dismiss" data-id="${esc(f.id)}">Dismiss</button>`;
+    }
   }
   return `<article class="finding-card ${sev}"><div class="finding-top"><span class="finding-type">${esc(f.type)}</span><span class="severity ${sev}">${esc(sev)} risk</span></div><div class="finding-body"><p class="quote">${highlighted(state.draft,f.quote)}</p><p>${esc(f.reason)}</p><div class="source-cite"><b>Related source · ${esc(sourceTitle)}</b>${esc(sourceQuote)}</div>${f.suggestion?`<p><b>Suggested edit:</b> “${esc(f.suggestion)}”</p>`:''}</div><div class="finding-actions">${actions}${statusLabel}</div></article>`;
 }
@@ -129,7 +132,7 @@ async function renderTeam() {
   const request = ++teamRequestVersion;
   if (!session) { node.innerHTML = '<div class="panel team-card"><h2>Sign in to manage workspace access</h2><p>Connect Supabase and sign in. Each collaborator uses their own account.</p><button class="button button-primary" data-page="settings">Open settings</button></div>'; return; }
   if (!workspaceId) { node.innerHTML = '<div class="panel team-card"><h2>Workspace not loaded</h2><p>Sync your workspace first to load team permissions.</p></div>'; return; }
-  if (workspaceRole !== 'admin') { node.innerHTML = `<div class="panel team-card"><span class="role-badge">${esc(workspaceRole || 'member')}</span><h2>Your workspace role</h2><p>${workspaceRole === 'reviewer' ? 'You can review drafts, maintain approved facts and claims, and record decisions.' : 'You can write and review drafts, accept suggested edits, and escalate findings. Approved facts, claims, and approvals are managed by Admins and Reviewers.'}</p><p class="fine-print">Ask a workspace Admin to manage invitations or membership.</p></div>`; return; }
+  if (workspaceRole !== 'admin') { node.innerHTML = `<div class="panel team-card"><span class="role-badge">${esc(workspaceRole || 'member')}</span><h2>Your workspace role</h2><p>${workspaceRole === 'reviewer' ? 'You can review drafts, maintain approved facts and claims, and record decisions.' : 'You can write drafts and use review suggestions. Sync saves your draft text; shared review findings, evidence, activity, and approvals are managed by Admins and Reviewers.'}</p><p class="fine-print">Ask a workspace Admin to manage invitations or membership.</p></div>`; return; }
   node.innerHTML = '<div class="panel team-card"><h2>Loading team…</h2></div>';
   try {
     const result = await rpcRequest('list_brandlens_team', {p_workspace_id: workspaceId});
@@ -218,14 +221,14 @@ function addSourceModal(){
  showModal('Add approved source','SOURCE LIBRARY',`<form id="source-form" class="form-stack"><label>Source title<input name="title" required maxlength="120" placeholder="e.g. Approved product facts"></label><div class="form-row"><label>Source type<select name="type"><option>Product facts</option><option>Brand guideline</option><option>Claim evidence</option><option>Approved asset list</option></select></label><label>Review date<input name="expiry" type="date"></label></div><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Approved source text<textarea name="content" required maxlength="12000" placeholder="Paste the approved passage or guidance"></textarea></label><p class="modal-help">Only add information you are authorised to use. The demo stores it in this browser unless Supabase is configured.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Save source</button></div></form>`);
 }
 function addClaimModal(){
- const options=state.sources.map(s=>`<option value="${s.id}">${esc(s.title)}</option>`).join('');
+ const options=state.sources.map(s=>`<option value="${esc(s.id)}">${esc(s.title)}</option>`).join('');
  showModal('Add approved claim','CLAIM LEDGER',`<form id="claim-form" class="form-stack"><label>Approved wording<textarea name="wording" required maxlength="800" placeholder="Use the exact wording that has been approved"></textarea></label><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><div class="form-row"><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Next review date<input name="reviewDate" type="date"></label></div><p class="modal-help">A claim is not approved by BrandLens. Add only wording that has already been approved by your reviewer.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Save claim</button></div></form>`);
 }
 function actionModal(action,finding){
  pendingAction={action,findingId:finding.id};
- if(action==='dismiss') return showModal('Dismiss tone finding','CREATOR ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Dismissal applies to tone or readability suggestions only. It does not erase the audit history.</p><label>Reason<input name="reason" required maxlength="300" placeholder="e.g. Intentional emphasis for this channel"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Record dismissal</button></div></form>`);
+ if(action==='dismiss') return showModal('Dismiss tone finding','REVIEWER ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Dismissal applies to tone or readability suggestions only. It does not erase the audit history.</p><label>Reason<input name="reason" required maxlength="300" placeholder="e.g. Intentional emphasis for this channel"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Record dismissal</button></div></form>`);
  if(action==='escalate') return showModal('Escalate finding','REVIEWER ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Escalation records the concern and keeps the draft from being approved.</p><label>Reason for escalation<input name="reason" required maxlength="300" placeholder="What needs reviewer attention?"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary">Escalate</button></div></form>`);
- const options=state.sources.map(s=>`<option value="${s.id}">${esc(s.title)}</option>`).join('');
+ const options=state.sources.map(s=>`<option value="${esc(s.id)}">${esc(s.title)}</option>`).join('');
  showModal('Resolve with supporting evidence','REVIEWER ACTION',`<form id="action-form" class="form-stack"><p class="modal-help">Attach the source that supports the final wording and record why the reviewer resolved this finding.</p><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><label>Resolution reason<input name="reason" required maxlength="300" placeholder="Explain how the source supports the revised claim"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Resolve finding</button></div></form>`);
 }
 function sessionHeaders(extra={}) { return {apikey:config.supabaseAnonKey,authorization:`Bearer ${session?.access_token||config.supabaseAnonKey}`,...extra}; }
@@ -247,16 +250,22 @@ async function syncWorkspace(mode='load'){
  if(!config.supabaseUrl||!config.supabaseAnonKey)return authModal();
  if(!session)return authModal();
  try{
-  if(mode==='save' && workspaceId){ await rpcRequest('save_brandlens_workspace',{p_workspace_id:workspaceId,p_payload:state}); audit('Workspace synced to Supabase','Current browser workspace saved to the shared workspace.'); }
-  const cloud=await rpcRequest('get_or_create_brandlens_workspace',{p_name:state.workspace||'BrandLens Workspace',p_initial_payload:state});
-  workspaceId=cloud.workspace_id; workspaceName=cloud.workspace_name||'BrandLens Workspace'; workspaceRole=cloud.role;
-  if(mode!=='save' || !workspaceId) state={...sampleState(),...(cloud.payload||{})};
-  state.workspace=workspaceName;
-  const ws=$('.side-workspace'); if(ws) ws.innerHTML=`<span class="workspace-dot"></span><span><b>${esc(workspaceName)}</b><small>${esc(workspaceRole)} workspace</small></span><span class="chevron">⌄</span>`;
+  if(mode==='save' && workspaceId){
+   const saved=await rpcRequest('save_brandlens_workspace',{p_workspace_id:workspaceId,p_payload:state,p_expected_revision:workspaceRevision});
+   workspaceRevision=Number(saved.revision);
+   state={...sampleState(),...(saved.payload||{})};
+   if(workspaceRole==='creator') toast('Draft saved. A Reviewer or Admin must run and save the shared review.');
+  } else {
+   const cloud=await rpcRequest('get_or_create_brandlens_workspace',{p_name:state.workspace||'BrandLens Workspace',p_initial_payload:state});
+   workspaceId=cloud.workspace_id; workspaceName=cloud.workspace_name||'BrandLens Workspace'; workspaceRole=cloud.role; workspaceRevision=Number(cloud.revision);
+   state={...sampleState(),...(cloud.payload||{})};
+  }
+  state.workspace=workspaceName||state.workspace;
+  const ws=$('.side-workspace'); if(ws) ws.innerHTML=`<span class="workspace-dot"></span><span><b>${esc(state.workspace)}</b><small>${esc(workspaceRole)} workspace</small></span><span class="chevron">⌄</span>`;
   const profile=$('.profile-row'); if(profile){profile.querySelector('b').textContent=session.user?.email||'Signed-in member';profile.querySelector('small').textContent=`${workspaceRole} · shared workspace`;}
   localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
   audit(mode==='save'?'Workspace synced to Supabase':'Workspace loaded from Supabase',mode==='save'?'Shared workspace is up to date.':'Cloud workspace loaded into this browser.');
-  renderAll({draft:true}); toast(mode==='save'?'Workspace saved to Supabase.':'Workspace loaded from Supabase.');
+  renderAll({draft:true}); if(!(mode==='save'&&workspaceRole==='creator'))toast(mode==='save'?'Workspace saved to Supabase.':'Workspace loaded from Supabase.');
  }catch(error){toast(error.message,true);}
 }
 async function exportBackup(){
@@ -277,10 +286,10 @@ document.addEventListener('click',async event=>{
  if(event.target.closest('#modal-close')||event.target.closest('[data-modal-close]')){closeModal();return;}
  if(event.target.closest('[data-auth-signup]')){const form=$('#auth-form');const data=Object.fromEntries(new FormData(form));try{const result=await authRequest('signup',{email:data.email,password:data.password});if(result.access_token){session=result;sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();toast('Account created.');await syncWorkspace();}else toast('Check your email to confirm the account, then sign in.');}catch(error){toast(error.message,true);}return;}
  if(event.target.closest('#account-button')){
-  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;workspaceId=null;workspaceRole=null;workspaceName='';sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
+  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;workspaceId=null;workspaceRole=null;workspaceName='';workspaceRevision=null;sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
   else if(!session)go('settings');return;
  }
- const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;if(session&&action==='resolve'&&!canManageLibrary())return toast('Only Admins and Reviewers can resolve findings.',true);if(session&&action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed.',true);
+ const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;if(session&&['resolve','dismiss','escalate'].includes(action)&&!canManageLibrary())return toast('Only Admins and Reviewers can record finding decisions.',true);if(session&&action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed.',true);
   if(action==='apply'){const start=state.draft.indexOf(f.quote);if(start<0)return toast('The quoted text has changed; run the review again.',true);state.draft=state.draft.slice(0,start)+f.suggestion+state.draft.slice(start+f.quote.length);f.status='updated';f.resolutionReason='Creator accepted the suggested edit.';audit('Suggested edit accepted',`${f.type}: “${f.quote}” was replaced in the draft.`);renderAll({draft:true});return toast('Suggested edit applied. Run another review before approval.');}
   if(action==='edit'){go('review');$('#draft-text').focus();$('#draft-text').scrollIntoView({behavior:'smooth',block:'center'});return;}
   actionModal(action,f);return;
@@ -305,7 +314,7 @@ document.addEventListener('submit',async event=>{
  if(form.id==='action-form'){
   const f=state.findings.find(x=>x.id===pendingAction?.findingId);if(!f)return closeModal();
   const action=pendingAction.action;
-  if(session&&action==='resolve'&&!canManageLibrary())return toast('Only Admins and Reviewers can resolve findings.',true);
+  if(session&&['resolve','dismiss','escalate'].includes(action)&&!canManageLibrary())return toast('Only Admins and Reviewers can record finding decisions.',true);
   if(action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed by creators.',true);
   f.status=action==='dismiss'?'dismissed':action==='escalate'?'escalated':'resolved';f.resolutionReason=data.reason.trim();
   if(action==='resolve'){f.sourceId=data.sourceId;const source=sourceById(data.sourceId);f.sourceTitle=source?.title||'';f.sourceQuote=source?.content||'';}

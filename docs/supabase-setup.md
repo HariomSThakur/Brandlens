@@ -29,7 +29,7 @@ SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 ```
 
-Never put a secret or service-role key in the app. Restart the server (`node server.mjs` or `npm start`) after changing `.env`, refresh `http://localhost:3000`, then sign in and press **Sync workspace**. The first Admin account creates the shared workspace and brings its local demo snapshot into Supabase. Later syncs save or load that shared state.
+Never put a secret or service-role key in the app. Restart the server (`node server.mjs` or `npm start`) after changing `.env`, refresh `http://localhost:3000`, then sign in and press **Sync workspace**. The first Admin account creates the shared workspace and brings its local demo snapshot into Supabase. Later syncs save or load that shared state. A revision check blocks stale saves so one teammate does not silently overwrite a newer snapshot.
 
 ## 4. Invite teammates
 
@@ -38,7 +38,7 @@ Never put a secret or service-role key in the app. Restart the server (`node ser
 3. Supabase does not send an invitation email in this MVP. Share the instructions directly; the teammate must create or sign in to Supabase Auth using the exact invited email. They then open BrandLens and sync. The invite is accepted automatically.
 4. Each Supabase account can belong to one BrandLens workspace in this version. Invite the account before it creates a separate BrandLens workspace.
 
-Roles: **Admin** can manage membership and all workspace data. **Reviewer** can manage facts/rules and claims, resolve findings, and record approvals. **Creator** can work on drafts, accept suggested edits, and escalate findings; they cannot edit approved facts/rules or claims, resolve claims, or approve. Supabase RPC checks enforce important writes in the database as well as in the UI.
+Roles: **Admin** can manage membership and all workspace data. **Reviewer** can manage facts/rules and claims, resolve findings, and record approvals. **Creator** can write drafts and use local review suggestions; Sync saves draft text only. Shared findings, evidence, activity, and approvals are managed by Admins and Reviewers. Supabase RPC checks enforce important writes in the database as well as in the UI.
 
 ## 5. Appearance
 

@@ -6,15 +6,15 @@
 - Draft editing and `.txt` / `.md` import.
 - Deterministic findings for risky unsupported claims, expired claim evidence, restricted wording, all-caps text, excess exclamation marks and long sentences.
 - Finding cards with exact draft quote, approved source text, reason and proposed edit.
-- Creator actions to accept a suggested edit, edit the draft, escalate, or dismiss non-claim findings with a reason.
+- Creator draft editing and suggested edits; Admins and Reviewers record escalations, dismissals, evidence decisions, and approvals.
 - Reviewer resolution for claim findings with a linked source and recorded reason.
 - Human approval record only after each finding has a disposition and the exact draft plus evidence set have been reviewed; editing the draft or changing evidence requires a fresh review. No publishing capability.
 - Browseable facts/rules library, approved-claim ledger and activity log.
-- Shared Supabase workspace with Admin, Reviewer, and Creator roles; Admin-managed invites, Reviewer evidence decisions, and Creator draft workflows. Invitations are stored but must be shared manually; transactional invitation email is not configured.
+- Shared Supabase workspace with Admin, Reviewer, and Creator roles; Admin-managed invites, Reviewer evidence decisions, and Creator draft workflows; Creator syncs are limited to draft text while shared decisions remain reviewer-controlled. Invitations are stored but must be shared manually; transactional invitation email is not configured.
 - Persistent Light, Dark, and Dark blue appearance themes, stored per browser.
 - Local browser persistence, bounded `.txt` / `.md` import, JSON backup export and optional Supabase Auth/cloud sync. Escalated findings remain actionable for a reviewer.
 - Optional server-side Ollama/Qwen advisory review with quote validation and deterministic-only fallback.
-- Supabase SQL schema with shared workspace membership, role-checked RPCs, row-level-security policies, and a data-preserving migration from the earlier per-user snapshot.
+- Supabase SQL schema with shared workspace membership, role-checked RPCs, revision-checked saves, row-level-security policies, and a data-preserving migration from the earlier per-user snapshot.
 
 ## Round 1 plan changes
 

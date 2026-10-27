@@ -30,10 +30,12 @@ create table if not exists public.workspace_state (
   owner_id uuid primary key references auth.users(id) on delete cascade,
   workspace_id uuid unique references public.workspaces(id) on delete cascade,
   payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
+  revision bigint not null default 1,
   updated_at timestamptz not null default now()
 );
 
 alter table public.workspace_state add column if not exists workspace_id uuid references public.workspaces(id) on delete cascade;
+alter table public.workspace_state add column if not exists revision bigint not null default 1;
 create unique index if not exists workspace_state_workspace_id_uidx on public.workspace_state(workspace_id) where workspace_id is not null;
 
 -- Migrate any pre-team per-user workspaces without losing their saved JSON.
@@ -119,6 +121,7 @@ declare
   v_role text;
   v_name text;
   v_payload jsonb;
+  v_revision bigint;
   v_invite public.workspace_invitations%rowtype;
 begin
   if v_user is null then raise exception 'Sign in is required.'; end if;
@@ -151,7 +154,7 @@ begin
     end if;
   end if;
 
-  select m.role,w.name,s.payload into v_role,v_name,v_payload
+  select m.role,w.name,s.payload,s.revision into v_role,v_name,v_payload,v_revision
   from public.workspace_members m
   join public.workspaces w on w.id=m.workspace_id
   left join public.workspace_state s on s.workspace_id=w.id
@@ -159,32 +162,76 @@ begin
 
   if v_role is null then raise exception 'No workspace membership found for this account.'; end if;
   if v_payload is null then raise exception 'Workspace state is missing; ask an admin to sync it.'; end if;
-  return jsonb_build_object('workspace_id',v_workspace,'workspace_name',v_name,'role',v_role,'payload',v_payload);
+  return jsonb_build_object('workspace_id',v_workspace,'workspace_name',v_name,'role',v_role,'revision',v_revision,'payload',v_payload);
 end;
 $$;
 
-create or replace function public.save_brandlens_workspace(p_workspace_id uuid, p_payload jsonb)
-returns void
-language plpgsql security definer
+drop function if exists public.save_brandlens_workspace(uuid, jsonb);
+
+create or replace function public.save_brandlens_workspace(
+  p_workspace_id uuid,
+  p_payload jsonb,
+  p_expected_revision bigint
+)
+returns jsonb
+language plpgsql
+security definer
 set search_path = public, pg_temp
 as $$
 declare
   v_role text;
   v_old jsonb;
+  v_next jsonb;
   v_owner uuid;
+  v_revision bigint;
 begin
   v_role := public.brandlens_role(p_workspace_id);
-  if v_role is null then raise exception 'You are not a member of this workspace.'; end if;
-  select payload into v_old from public.workspace_state where workspace_id=p_workspace_id;
-  if v_old is null then raise exception 'Workspace state was not found.'; end if;
-  if v_role='creator' and (
-    p_payload->'sources' is distinct from v_old->'sources' or
-    p_payload->'claims' is distinct from v_old->'claims' or
-    p_payload->'approvals' is distinct from v_old->'approvals'
-  ) then raise exception 'Creators cannot change approved facts, rules, claims, or approvals.'; end if;
-  select owner_id into v_owner from public.workspaces where id=p_workspace_id;
-  update public.workspace_state set payload=p_payload,updated_at=now()
-  where workspace_id=p_workspace_id and owner_id=v_owner;
+  if v_role is null then
+    raise exception 'You are not a member of this workspace.';
+  end if;
+
+  if jsonb_typeof(p_payload) is distinct from 'object'
+     or jsonb_typeof(p_payload->'draft') is distinct from 'string'
+     or length(p_payload->>'draft') > 30000
+     or jsonb_typeof(p_payload->'draftName') is distinct from 'string'
+     or length(p_payload->>'draftName') > 100 then
+    raise exception 'Workspace payload is invalid or exceeds the draft limits.';
+  end if;
+
+  select s.payload, s.owner_id, s.revision
+  into v_old, v_owner, v_revision
+  from public.workspace_state s
+  where s.workspace_id = p_workspace_id
+  for update;
+
+  if v_old is null then
+    raise exception 'Workspace state was not found.';
+  end if;
+
+  if p_expected_revision is distinct from v_revision then
+    raise exception 'Workspace changed since your last sync. Reload the latest workspace before saving.'
+      using errcode = '40001';
+  end if;
+
+  if v_role = 'creator' then
+    -- Creators submit draft text only. Shared findings, decisions, evidence,
+    -- approvals, and activity remain controlled by Admins and Reviewers.
+    v_next := v_old || jsonb_build_object(
+      'draft', p_payload->'draft',
+      'draftName', p_payload->'draftName'
+    );
+  else
+    v_next := p_payload;
+  end if;
+
+  update public.workspace_state
+  set payload = v_next,
+      revision = v_revision + 1,
+      updated_at = now()
+  where workspace_id = p_workspace_id
+    and owner_id = v_owner;
+
+  return jsonb_build_object('revision', v_revision + 1, 'payload', v_next);
 end;
 $$;
 
@@ -235,12 +282,12 @@ end;
 $$;
 
 revoke all on function public.get_or_create_brandlens_workspace(text,jsonb) from public, anon;
-revoke all on function public.save_brandlens_workspace(uuid,jsonb) from public, anon;
+revoke all on function public.save_brandlens_workspace(uuid,jsonb,bigint) from public, anon;
 revoke all on function public.invite_brandlens_member(uuid,text,text) from public, anon;
 revoke all on function public.list_brandlens_team(uuid) from public, anon;
 revoke all on function public.remove_brandlens_member(uuid,uuid) from public, anon;
 grant execute on function public.get_or_create_brandlens_workspace(text,jsonb) to authenticated;
-grant execute on function public.save_brandlens_workspace(uuid,jsonb) to authenticated;
+grant execute on function public.save_brandlens_workspace(uuid,jsonb,bigint) to authenticated;
 grant execute on function public.invite_brandlens_member(uuid,text,text) to authenticated;
 grant execute on function public.list_brandlens_team(uuid) to authenticated;
 grant execute on function public.remove_brandlens_member(uuid,uuid) to authenticated;

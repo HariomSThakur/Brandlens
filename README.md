@@ -33,7 +33,7 @@ DOCX/image parsing and automated image recognition are not included in this MVP.
 
 Follow [`docs/supabase-setup.md`](docs/supabase-setup.md) for the complete dashboard, SQL, local `.env`, account, and verification steps.
 
-The app uses Supabase Auth and role-checked RPCs for shared workspace sync, membership, and invitations. Database policies protect workspace state. Admins invite Reviewers or Creators; invitation emails must be shared out of band. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
+The app uses Supabase Auth and role-checked RPCs for shared workspace sync, membership, and invitations. Database policies protect workspace state. Admins invite Reviewers or Creators; invitation emails must be shared out of band. Creators sync draft text, while Admins and Reviewers manage the shared findings and approval record. Revision checks prevent stale snapshots from silently overwriting newer workspace data. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
 
 ## Optional Qwen review through Ollama
 
