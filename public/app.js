@@ -1,7 +1,7 @@
 import { analyzeDraft } from "./review-engine.js";
 const STORAGE_KEY = 'brandlens.round2.workspace.v1';
 const SESSION_KEY = 'brandlens.supabase.session.v1';
-const THEME_KEY = 'brandlens.theme.v1';
+const THEME_KEY = 'brandlens.theme.v2';
 const today = new Date().toISOString().slice(0, 10);
 const id = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 const iso = () => new Date().toISOString();
@@ -49,7 +49,7 @@ function setTheme(theme) {
   const colors = {light:'#f5f8f8',dark:'#0d1217',blue:'#0b1424'};
   $('meta[name=theme-color]')?.setAttribute('content', colors[value]);
 }
-try { setTheme(localStorage.getItem(THEME_KEY) || 'light'); } catch { setTheme('light'); }
+try { setTheme(localStorage.getItem(THEME_KEY) || 'dark'); } catch { setTheme('dark'); }
 
 function audit(action, detail) { state.audit.push({id:id(),action,detail,at:iso()}); }
 function save() {
@@ -256,7 +256,7 @@ async function exportBackup(){
 }
 
 $('#draft-text').value=state.draft||'';$('#draft-name').value=state.draftName||'';updateCharCount();renderAll();
-fetch('/api/config').then(r=>r.json()).then(async data=>{config=data; if(data.ollamaReady){$('#ai-status').innerHTML=`<i></i> Rules + Ollama · ${esc(data.ollamaModel)}`;$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session){$('#storage-status').innerHTML='<i></i> Supabase connected';if(data.supabaseUrl&&data.supabaseAnonKey)await syncWorkspace('load');}}).catch(()=>{$('#ai-status').innerHTML='<i></i> Deterministic rules only';});
+fetch('/api/config').then(r=>r.json()).then(async data=>{config=data; if(data.ollamaReady){$('#ai-status').innerHTML=`<i></i> Rules + Ollama · ${esc(data.ollamaModel)}`;$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';$('#storage-description').textContent='Supabase is configured. Sign in to sync this workspace across your team.';}else{$('#sync-button').textContent='Configure Supabase';$('#settings-sync').textContent='Configure Supabase';$('#storage-description').textContent='Supabase is not configured on this server yet. Add the project URL and publishable key in Render → Environment to enable accounts and cloud sync.';} if(session){$('#storage-status').innerHTML='<i></i> Supabase connected';if(data.supabaseUrl&&data.supabaseAnonKey)await syncWorkspace('load');}}).catch(()=>{$('#ai-status').innerHTML='<i></i> Deterministic rules only';});
 
 document.addEventListener('click',async event=>{
  const pageButton=event.target.closest('[data-page]');if(pageButton){go(pageButton.dataset.page);return;}

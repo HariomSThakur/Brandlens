@@ -81,7 +81,7 @@
       <section class="page" id="page-settings" aria-labelledby="settings-title">
         <div class="page-heading"><div><div class="eyebrow">WORKSPACE CONTROL</div><h1 id="settings-title">Settings</h1><p>Choose where your workspace data lives and how optional AI review is used.</p></div></div>
         <div class="settings-grid">
-          <div class="panel setting-card"><div class="setting-icon teal">◐</div><h2>Appearance</h2><p>Choose a theme for this browser. Your choice is saved on this device.</p><label class="theme-setting" for="theme-select">Color theme<select id="theme-select" class="theme-select"><option value="light">Light</option><option value="dark">Dark</option><option value="blue">Dark blue</option></select></label></div>
+          <div class="panel setting-card"><div class="setting-icon teal">◐</div><h2>Appearance</h2><p>Choose a theme for this browser. Your choice is saved on this device.</p><label class="theme-setting" for="theme-select">Color theme<select id="theme-select" class="theme-select"><option value="light">Light</option><option value="dark">Black</option><option value="blue">Dark blue</option></select></label></div>
           <div class="panel setting-card"><div class="setting-icon teal">▤</div><h2>Storage and privacy</h2><p id="storage-description">Local demo mode stores your workspace in this browser only. No account or cloud sync is active.</p><button class="button button-outline" id="settings-sync">Configure Supabase</button><button class="button button-outline" id="reset-demo">Reset fictional workspace</button><p class="fine-print">For cloud sync, add your Supabase project URL and publishable key to <code>.env</code>, then apply the provided schema. Never put a service-role key in this app.</p></div>
           <div class="panel setting-card"><div class="setting-icon violet">✳</div><h2>Optional Qwen review</h2><p id="model-description">Deterministic checks work without a model. An Ollama-hosted Qwen model can add advisory tone review when configured on the server.</p><span class="setting-chip" id="model-chip">Rule checks only</span><p class="fine-print">Model suggestions are advisory, validated against the submitted draft, and never approve or publish content.</p></div>
           <div class="panel setting-card wide"><div class="setting-icon gold">◈</div><h2>Confidentiality modes</h2><div class="mode-list"><div><b>Synthetic data only</b><span>Use the included fictional workspace.</span></div><div><b>Local model</b><span>Optional review requests stay on your machine when your Ollama endpoint is local.</span></div><div><b>Remote model</b><span>Configure only after reviewing the host's retention terms. The app sends the draft and relevant excerpts, not the full library.</span></div></div></div>
@@ -93,7 +93,7 @@
 
   <div class="modal-backdrop" id="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-head"><div><div class="eyebrow" id="modal-kicker">WORKSPACE</div><h2 id="modal-title">Add source</h2></div><button class="icon-button" id="modal-close" aria-label="Close dialog">×</button></div><div id="modal-body"></div></section></div>
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
 
