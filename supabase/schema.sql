@@ -194,7 +194,8 @@ begin
      or jsonb_typeof(p_payload->'draft') is distinct from 'string'
      or length(p_payload->>'draft') > 30000
      or jsonb_typeof(p_payload->'draftName') is distinct from 'string'
-     or length(p_payload->>'draftName') > 100 then
+     or length(p_payload->>'draftName') > 100
+     or (p_payload ? 'audit' and jsonb_typeof(p_payload->'audit') is distinct from 'array') then
     raise exception 'Workspace payload is invalid or exceeds the draft limits.';
   end if;
 
@@ -221,7 +222,16 @@ begin
       'draftName', p_payload->'draftName'
     );
   else
-    v_next := p_payload;
+    -- Preserve prior audit events even when a client submits a complete JSON snapshot.
+    -- New events are appended; edits or deletions cannot replace the stored history.
+    v_next := p_payload || jsonb_build_object(
+      'audit',
+      coalesce(v_old->'audit', '[]'::jsonb) || coalesce((
+        select jsonb_agg(incoming.item order by incoming.ordinal)
+        from jsonb_array_elements(coalesce(p_payload->'audit', '[]'::jsonb)) with ordinality as incoming(item, ordinal)
+        where not coalesce(v_old->'audit', '[]'::jsonb) @> jsonb_build_array(incoming.item)
+      ), '[]'::jsonb)
+    );
   end if;
 
   update public.workspace_state

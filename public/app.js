@@ -1,3 +1,4 @@
+import { analyzeDraft } from "./review-engine.js";
 const STORAGE_KEY = 'brandlens.round2.workspace.v1';
 const SESSION_KEY = 'brandlens.supabase.session.v1';
 const THEME_KEY = 'brandlens.theme.v1';
@@ -50,7 +51,7 @@ function setTheme(theme) {
 }
 try { setTheme(localStorage.getItem(THEME_KEY) || 'light'); } catch { setTheme('light'); }
 
-function audit(action, detail) { state.audit.unshift({id:id(),action,detail,at:iso()}); state.audit = state.audit.slice(0,250); }
+function audit(action, detail) { state.audit.push({id:id(),action,detail,at:iso()}); }
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   $('#storage-status').innerHTML = `<i></i> ${session ? 'Supabase connected' : 'Local demo'}`;
@@ -101,7 +102,7 @@ function findingCard(f) {
   const statusLabel = actionable ? '' : `<span class="finding-status">${esc(f.status === 'updated' ? 'Edit accepted' : f.status)}</span>`;
   let actions = '';
   if (actionable) {
-    actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${esc(f.id)}">Accept edit</button><button class="mini-action" data-finding-action="edit" data-id="${esc(f.id)}">Edit draft</button>`;
+    if (f.suggestion) actions += `<button class="mini-action primary" data-finding-action="apply" data-id="${esc(f.id)}">Accept edit</button>`; actions += `<button class="mini-action" data-finding-action="edit" data-id="${esc(f.id)}">Edit draft</button>`;
     if (isClaim && canManageLibrary()) actions += `<button class="mini-action" data-finding-action="resolve" data-id="${esc(f.id)}">Resolve with evidence</button>`;
     if (canManageLibrary()) {
       actions += `<button class="mini-action" data-finding-action="escalate" data-id="${esc(f.id)}">Escalate</button>`;
@@ -124,7 +125,7 @@ function renderFindings() {
   } else { summary.hidden = true; summary.textContent=''; }
 }
 function renderActivity() {
-  $('#activity-list').innerHTML = state.audit.length ? state.audit.map(item=>`<article class="activity-item"><div class="activity-icon">✓</div><div><b>${esc(item.action)}</b><p>${esc(item.detail)}</p></div><time>${new Date(item.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></article>`).join('') : '<div class="empty-table">No decisions recorded yet.</div>';
+  $('#activity-list').innerHTML = state.audit.length ? [...state.audit].reverse().map(item=>`<article class="activity-item"><div class="activity-icon">✓</div><div><b>${esc(item.action)}</b><p>${esc(item.detail)}</p></div><time>${new Date(item.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></article>`).join('') : '<div class="empty-table">No decisions recorded yet.</div>';
 }
 function canManageLibrary() { return !session || ['admin','reviewer'].includes(workspaceRole); }
 async function renderTeam() {
@@ -165,26 +166,8 @@ function makeFinding({type,category='claim',severity='high',quote,sourceId=null,
   return {id:id(),type,category,severity,quote,sourceId,sourceTitle:source?.title||'',sourceQuote:source?.content||'',reason,suggestion,status:'open',createdAt:iso()};
 }
 function deterministicReview(draft) {
-  const findings=[]; const sourceFact=state.sources.find(s=>/product facts|fact sheet|study/i.test(`${s.type} ${s.title}`)) || state.sources[0];
-  const sentences=[...draft.matchAll(/[^.!?\n]+[.!?]?/g)].map(m=>({text:m[0].trim(),start:m.index+(m[0].length-m[0].trimStart().length)})).filter(x=>x.text);
-  for (const part of sentences) {
-    const norm=part.text.toLowerCase();
-    const oldClaim=state.claims.find(c=>norm.includes(c.wording.toLowerCase()));
-    const linkedSource=oldClaim && sourceById(oldClaim.sourceId);
-    const claimExpired=oldClaim && (oldClaim.status!=='approved' || (oldClaim.reviewDate && oldClaim.reviewDate<today) || (linkedSource?.expiry && linkedSource.expiry<today));
-    if (claimExpired) {
-      findings.push(makeFinding({type:'Expired claim evidence',category:'claim',severity:'high',quote:part.text,sourceId:oldClaim.sourceId,reason:`This wording matches a claim whose review date passed on ${fmtDate(oldClaim.reviewDate)}. Refresh and approve its evidence before reuse.`,suggestion:'Remove the customer-count claim until current evidence is approved.'}));
-    } else if (!oldClaim && /\b(clinically proven|clinically tested|guarantee(?:d)?|erase|cure|permanent|100%|\d[\d,]*\+?\s*(?:customers|families|users|people|days?|weeks?|months?))\b/i.test(part.text)) {
-      const suggestion=/\b(customer|family|families|users|people)\b/i.test(part.text) ? 'We are grateful to our community.' : 'Explore our latest products.';
-      findings.push(makeFinding({type:'Claim needs evidence',category:'claim',severity:'high',quote:part.text,sourceId:sourceFact?.id,reason:'This sentence makes a performance, timeframe or quantified claim. The linked source must support the exact result and scope before use.',suggestion}));
-    }
-    const banned=part.text.match(/\b(whitening|bleaching)\b/i);
-    if (banned) findings.push(makeFinding({type:'Terminology',category:'terminology',severity:'medium',quote:banned[0],sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'The writing guide asks creators to use approved brand terminology.',suggestion:'brightening'}));
-    if (/!{2,}/.test(part.text)) findings.push(makeFinding({type:'Tone',category:'tone',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'The writing guide allows at most one exclamation mark per post.',suggestion:part.text.replace(/!{2,}/g,'!')}));
-    if (/^[A-Z\d\s.,!?'-]{18,}$/.test(part.text) && /[A-Z]/.test(part.text)) findings.push(makeFinding({type:'Readability',category:'readability',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'This all-caps text may be harder to scan. Review the casing.',suggestion:part.text.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}));
-    if (part.text.split(/\s+/).length>38) findings.push(makeFinding({type:'Readability',category:'readability',severity:'low',quote:part.text,sourceId:state.sources.find(s=>/guideline/i.test(`${s.type} ${s.title}`))?.id,reason:'This sentence is long. Consider splitting it so readers can scan it more easily.',suggestion:part.text}));
-  }
-  return findings;
+  return analyzeDraft(draft, { sources: state.sources, claims: state.claims, today })
+    .map(finding => ({ ...finding, id: id(), createdAt: iso(), status: 'open' }));
 }
 async function runReview() {
   const draft=$('#draft-text').value.trim();
@@ -193,7 +176,7 @@ async function runReview() {
   state.findings=deterministicReview(draft); state.reviews+=1; state.reviewed=true; state.reviewedDraft=draft; state.reviewedSignature=reviewSignature();
   audit('Draft reviewed',`${state.findings.length} deterministic finding(s) created for “${state.draftName}”.`);
   renderAll();
-  $('#ai-status').innerHTML = config.ollamaReady ? '<i></i> Adding optional Qwen review…' : '<i></i> Rule checks active';
+  $('#ai-status').innerHTML = config.ollamaReady ? '<i></i> Adding optional Qwen review…' : '<i></i> Deterministic rules only';
   toast(`${state.findings.length} finding${state.findings.length===1?'':'s'} created from the approved rules and source dates.`);
   if (config.ollamaReady) {
     try {
@@ -204,12 +187,12 @@ async function runReview() {
         if(!draft.includes(f.quote)||state.findings.some(x=>x.quote===f.quote&&x.type===f.type)) continue;
         const source=state.sources.find(s=>s.title===f.sourceTitle)||state.sources.find(s=>f.sourceQuote&&s.content.includes(f.sourceQuote));
         const exactQuote=source&&f.sourceQuote&&source.content.includes(f.sourceQuote)?f.sourceQuote:source?.content||'';
-        state.findings.push({id:id(),type:String(f.type||'AI suggestion').slice(0,50),category:/claim|evidence/i.test(f.type||'')?'claim':'tone',severity:['high','medium','low'].includes(f.severity)?f.severity:'medium',quote:f.quote,sourceId:source?.id||null,sourceTitle:source?.title||'No matching approved source',sourceQuote:exactQuote,reason:String(f.reason||'Advisory model suggestion.').slice(0,500),suggestion:String(f.suggestion||'').slice(0,500),status:'open',createdAt:iso(),model:payload.model}); added++;
+        const category=/claim|evidence/i.test(f.type||'')?'claim':'tone';const linkedClaim=state.claims.find(c=>f.quote.toLowerCase().includes(String(c.wording).toLowerCase()));const safeSuggestion=category==='claim'?(linkedClaim?.alternativeWording||''):String(f.suggestion||'').slice(0,500);state.findings.push({id:id(),type:String(f.type||'AI suggestion').slice(0,50),category,severity:['high','medium','low'].includes(f.severity)?f.severity:'medium',quote:f.quote,sourceId:source?.id||null,sourceTitle:source?.title||'No matching approved source',sourceQuote:exactQuote,reason:String(f.reason||'Advisory model suggestion.').slice(0,500),suggestion:safeSuggestion,status:'open',createdAt:iso(),model:payload.model}); added++;
       }
       if(added){audit('Optional Qwen review completed',`${added} additional advisory finding(s) added.`);renderAll();}
       $('#ai-status').innerHTML=`<i></i> Qwen · ${esc(payload.model)}`;
       if(added) toast(`Optional Qwen review added ${added} advisory finding(s).`);
-    } catch(error) { $('#ai-status').innerHTML='<i></i> Rule checks active'; toast(`Qwen review unavailable; deterministic results remain. ${error.message}`,true); }
+    } catch(error) { $('#ai-status').innerHTML='<i></i> Deterministic rules only'; toast(`Qwen review unavailable; deterministic results remain. ${error.message}`,true); }
   }
 }
 function showModal(title, kicker, html) {
@@ -222,7 +205,7 @@ function addSourceModal(){
 }
 function addClaimModal(){
  const options=state.sources.map(s=>`<option value="${esc(s.id)}">${esc(s.title)}</option>`).join('');
- showModal('Add approved claim','CLAIM LEDGER',`<form id="claim-form" class="form-stack"><label>Approved wording<textarea name="wording" required maxlength="800" placeholder="Use the exact wording that has been approved"></textarea></label><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><div class="form-row"><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Next review date<input name="reviewDate" type="date"></label></div><p class="modal-help">A claim is not approved by BrandLens. Add only wording that has already been approved by your reviewer.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Save claim</button></div></form>`);
+ showModal('Add approved claim','CLAIM LEDGER',`<form id="claim-form" class="form-stack"><label>Approved wording<textarea name="wording" required maxlength="800" placeholder="Use the exact wording that has been approved"></textarea></label><label>Pre-approved alternative wording (optional)<textarea name="alternativeWording" maxlength="800" placeholder="A safe replacement a creator may use"></textarea></label><label>Supporting source<select name="sourceId" required>${options||'<option value="">Add a source first</option>'}</select></label><div class="form-row"><label>Owner<input name="owner" value="Hariom Thakur" maxlength="80"></label><label>Next review date<input name="reviewDate" type="date"></label></div><p class="modal-help">A claim is not approved by BrandLens. Add only wording that has already been approved by your reviewer.</p><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button class="button button-primary" ${options?'':'disabled'}>Save claim</button></div></form>`);
 }
 function actionModal(action,finding){
  pendingAction={action,findingId:finding.id};
@@ -273,7 +256,7 @@ async function exportBackup(){
 }
 
 $('#draft-text').value=state.draft||'';$('#draft-name').value=state.draftName||'';updateCharCount();renderAll();
-fetch('/api/config').then(r=>r.json()).then(async data=>{config=data; if(data.ollamaReady){$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session){$('#storage-status').innerHTML='<i></i> Supabase connected';if(data.supabaseUrl&&data.supabaseAnonKey)await syncWorkspace('load');}}).catch(()=>{});
+fetch('/api/config').then(r=>r.json()).then(async data=>{config=data; if(data.ollamaReady){$('#ai-status').innerHTML=`<i></i> Rules + Ollama · ${esc(data.ollamaModel)}`;$('#model-chip').textContent=`Configured · ${data.ollamaModel}`;$('#model-description').textContent='A Qwen model is configured through the server-side Ollama connection. Model review is optional; deterministic checks remain active.';} if(data.supabaseUrl&&data.supabaseAnonKey){$('#sync-button').textContent=session?'Sync workspace':'Sign in to sync';$('#settings-sync').textContent=session?'Sync workspace':'Sign in to sync';} if(session){$('#storage-status').innerHTML='<i></i> Supabase connected';if(data.supabaseUrl&&data.supabaseAnonKey)await syncWorkspace('load');}}).catch(()=>{$('#ai-status').innerHTML='<i></i> Deterministic rules only';});
 
 document.addEventListener('click',async event=>{
  const pageButton=event.target.closest('[data-page]');if(pageButton){go(pageButton.dataset.page);return;}
@@ -290,7 +273,7 @@ document.addEventListener('click',async event=>{
   else if(!session)go('settings');return;
  }
  const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;if(session&&['resolve','dismiss','escalate'].includes(action)&&!canManageLibrary())return toast('Only Admins and Reviewers can record finding decisions.',true);if(session&&action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed.',true);
-  if(action==='apply'){const start=state.draft.indexOf(f.quote);if(start<0)return toast('The quoted text has changed; run the review again.',true);state.draft=state.draft.slice(0,start)+f.suggestion+state.draft.slice(start+f.quote.length);f.status='updated';f.resolutionReason='Creator accepted the suggested edit.';audit('Suggested edit accepted',`${f.type}: “${f.quote}” was replaced in the draft.`);renderAll({draft:true});return toast('Suggested edit applied. Run another review before approval.');}
+  if(action==='apply'){const start=state.draft.indexOf(f.quote);if(start<0)return toast('The quoted text has changed; run the review again.',true);if(!f.suggestion)return toast('No pre-approved replacement is available. Edit the draft directly or ask a Reviewer to add approved alternative wording.',true);state.draft=state.draft.slice(0,start)+f.suggestion+state.draft.slice(start+f.quote.length);f.status='updated';f.resolutionReason='Creator accepted the suggested edit.';state.findings=deterministicReview(state.draft);state.reviews+=1;state.reviewed=true;state.reviewedDraft=state.draft;state.reviewedSignature=reviewSignature();audit('Suggested edit rechecked',`${f.type}: the replacement was checked against the active deterministic rules.`);renderAll({draft:true});return toast('Edit applied and checked again. Review any remaining findings before approval.');}
   if(action==='edit'){go('review');$('#draft-text').focus();$('#draft-text').scrollIntoView({behavior:'smooth',block:'center'});return;}
   actionModal(action,f);return;
  }
@@ -309,7 +292,7 @@ document.addEventListener('submit',async event=>{
  }
  if(form.id==='claim-form'){
   if(session&&!canManageLibrary())return toast('Only Admins and Reviewers can change approved claims.',true);
-  state.claims.unshift({id:id(),wording:data.wording.trim(),sourceId:data.sourceId,owner:data.owner.trim(),reviewDate:data.reviewDate||'',status:'approved'});audit('Approved claim added',`“${data.wording.trim()}” was linked to a source.`);closeModal();renderAll();toast('Claim added to the ledger.');return;
+  state.claims.unshift({id:id(),wording:data.wording.trim(),alternativeWording:data.alternativeWording.trim(),sourceId:data.sourceId,owner:data.owner.trim(),reviewDate:data.reviewDate||'',status:'approved'});audit('Approved claim added',`“${data.wording.trim()}” was linked to a source.`);closeModal();renderAll();toast('Claim added to the ledger.');return;
  }
  if(form.id==='action-form'){
   const f=state.findings.find(x=>x.id===pendingAction?.findingId);if(!f)return closeModal();

@@ -4,7 +4,7 @@
 
 - Responsive review workspace with a fictional, clearly labeled brand.
 - Draft editing and `.txt` / `.md` import.
-- Deterministic findings for risky unsupported claims, expired claim evidence, restricted wording, all-caps text, excess exclamation marks and long sentences.
+- Deterministic findings for risky unsupported claims, expired claim evidence, numeric mismatches, restricted wording, all-caps text, excess exclamation marks and long sentences.
 - Finding cards with exact draft quote, approved source text, reason and proposed edit.
 - Creator draft editing and suggested edits; Admins and Reviewers record escalations, dismissals, evidence decisions, and approvals.
 - Reviewer resolution for claim findings with a linked source and recorded reason.
@@ -13,7 +13,7 @@
 - Shared Supabase workspace with Admin, Reviewer, and Creator roles; Admin-managed invites, Reviewer evidence decisions, and Creator draft workflows; Creator syncs are limited to draft text while shared decisions remain reviewer-controlled. Invitations are stored but must be shared manually; transactional invitation email is not configured.
 - Persistent Light, Dark, and Dark blue appearance themes, stored per browser.
 - Local browser persistence, bounded `.txt` / `.md` import, JSON backup export and optional Supabase Auth/cloud sync. Escalated findings remain actionable for a reviewer.
-- Optional server-side Ollama/Qwen advisory review with quote validation and deterministic-only fallback.
+- Optional server-side Ollama/Qwen advisory review with quote validation and deterministic-only fallback; the UI reports the active mode and configured model tag.
 - Supabase SQL schema with shared workspace membership, role-checked RPCs, revision-checked saves, row-level-security policies, and a data-preserving migration from the earlier per-user snapshot.
 
 ## Round 1 plan changes
@@ -32,4 +32,4 @@
 
 ## Evaluation still needed
 
-The product includes a deterministic review path and a fictional example workspace. A representative user study, measured accuracy on the planned 40-draft evaluation set, live Supabase configuration, and deployed public URL still need to be completed before claiming those results or links.
+The product includes a deterministic review path and a fictional example workspace. The 40-draft author-labeled evaluation is now reproducible with `npm run eval`; its current results and self-authored-data limitation are documented in README. Independent labels and two or three real user interviews remain future work (interviews completed so far: n=0); a short guide is available in `docs/interview-guide.md`. Live Supabase configuration and a deployed public URL must be verified before claiming them.
