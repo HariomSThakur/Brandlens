@@ -150,7 +150,7 @@ begin
       insert into public.workspace_members(workspace_id,user_id,role)
       values(v_workspace,v_user,'admin');
       insert into public.workspace_state(owner_id,workspace_id,payload,updated_at)
-      values(v_user,v_workspace,coalesce(p_initial_payload,'{}'::jsonb),now());
+      values(v_user,v_workspace,jsonb_set(coalesce(p_initial_payload,'{}'::jsonb),'{audit}','[]'::jsonb,true),now());
     end if;
   end if;
 
@@ -222,16 +222,13 @@ begin
       'draftName', p_payload->'draftName'
     );
   else
-    -- Preserve prior audit events even when a client submits a complete JSON snapshot.
-    -- New events are appended; edits or deletions cannot replace the stored history.
-    v_next := p_payload || jsonb_build_object(
-      'audit',
-      coalesce(v_old->'audit', '[]'::jsonb) || coalesce((
-        select jsonb_agg(incoming.item order by incoming.ordinal)
-        from jsonb_array_elements(coalesce(p_payload->'audit', '[]'::jsonb)) with ordinality as incoming(item, ordinal)
-        where not coalesce(v_old->'audit', '[]'::jsonb) @> jsonb_build_array(incoming.item)
-      ), '[]'::jsonb)
-    );
+    if v_role = 'reviewer'
+       and coalesce(p_payload->'ruleDecisions','[]'::jsonb) is distinct from coalesce(v_old->'ruleDecisions','[]'::jsonb) then
+      raise exception 'Only an Admin can record guideline owner decisions.';
+    end if;
+    -- Snapshot saves can never insert, rewrite, or delete audit entries. New
+    -- shared events go through the server-stamped append-only audit RPC below.
+    v_next := p_payload || jsonb_build_object('audit',coalesce(v_old->'audit','[]'::jsonb));
   end if;
 
   update public.workspace_state
@@ -301,3 +298,99 @@ grant execute on function public.save_brandlens_workspace(uuid,jsonb,bigint) to 
 grant execute on function public.invite_brandlens_member(uuid,text,text) to authenticated;
 grant execute on function public.list_brandlens_team(uuid) to authenticated;
 grant execute on function public.remove_brandlens_member(uuid,uuid) to authenticated;
+
+-- Canonical shared activity events. Workspace JSON snapshots are not allowed to
+-- replace this table; actors and timestamps are assigned by the database.
+create table if not exists public.workspace_audit_events (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  event_key uuid not null,
+  actor_id uuid not null references auth.users(id) on delete restrict,
+  action text not null check (length(action) between 1 and 80),
+  detail text not null check (length(detail) <= 2000),
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  unique (workspace_id, event_key)
+);
+
+alter table public.workspace_audit_events enable row level security;
+drop policy if exists "BrandLens members can read shared audit events" on public.workspace_audit_events;
+create policy "BrandLens members can read shared audit events" on public.workspace_audit_events
+for select to authenticated using (public.brandlens_is_member(workspace_id));
+revoke all on public.workspace_audit_events from anon, authenticated;
+grant select on public.workspace_audit_events to authenticated;
+
+create or replace function public.prevent_brandlens_audit_mutation()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  raise exception 'Shared BrandLens audit events are append-only.';
+end;
+$$;
+drop trigger if exists workspace_audit_events_immutable on public.workspace_audit_events;
+create trigger workspace_audit_events_immutable
+before update or delete on public.workspace_audit_events
+for each row execute function public.prevent_brandlens_audit_mutation();
+
+create or replace function public.append_brandlens_audit_event(p_workspace_id uuid, p_event jsonb)
+returns jsonb language plpgsql security definer
+set search_path = public, auth, pg_temp as $$
+declare
+  v_role text := public.brandlens_role(p_workspace_id);
+  v_action text := trim(coalesce(p_event->>'action',''));
+  v_event_key uuid;
+  v_row public.workspace_audit_events%rowtype;
+begin
+  if v_role is null then raise exception 'You are not a member of this workspace.'; end if;
+  if v_action not in (
+    'Claim queued for re-review','Past approval queued for re-review','Source version created','Source details saved',
+    'Source added','Claim re-reviewed','Approved claim added','Draft reviewed','Optional Qwen review completed',
+    'Verified rewrite accepted','Verified rewrite rejected','Finding dismissed','Finding escalated',
+    'Finding resolved with evidence','Draft approved by workspace owner','Workspace synced to Supabase',
+    'Workspace loaded from Supabase','Source removed','Claim removed','Workspace member removed',
+    'Guideline owner decision recorded','Workspace invite created'
+  ) then raise exception 'This activity action is not supported.'; end if;
+  if v_role = 'creator' and v_action not in (
+    'Draft reviewed','Verified rewrite accepted','Verified rewrite rejected',
+    'Workspace synced to Supabase','Workspace loaded from Supabase'
+  ) then raise exception 'Creators cannot append reviewer, approval, source, or policy decisions.'; end if;
+  if v_role <> 'admin' and v_action = 'Guideline owner decision recorded' then
+    raise exception 'Only an Admin can append a guideline owner decision.';
+  end if;
+  if jsonb_typeof(p_event) is distinct from 'object'
+     or jsonb_typeof(p_event->'metadata') not in ('object','null')
+     or length(coalesce(p_event->>'detail','')) > 2000 then
+    raise exception 'Audit event payload is invalid.';
+  end if;
+  begin v_event_key := (p_event->>'event_key')::uuid;
+  exception when others then raise exception 'Audit event key must be a UUID.'; end;
+
+  insert into public.workspace_audit_events(workspace_id,event_key,actor_id,action,detail,metadata)
+  values(p_workspace_id,v_event_key,auth.uid(),v_action,coalesce(p_event->>'detail',''),coalesce(p_event->'metadata','{}'::jsonb))
+  on conflict(workspace_id,event_key) do nothing;
+  select * into v_row from public.workspace_audit_events
+  where workspace_id=p_workspace_id and event_key=v_event_key;
+  return jsonb_build_object('id',v_row.id,'event_key',v_row.event_key,'workspace_id',v_row.workspace_id,
+    'actor_id',v_row.actor_id,'action',v_row.action,'detail',v_row.detail,'metadata',v_row.metadata,'created_at',v_row.created_at);
+end;
+$$;
+
+create or replace function public.list_brandlens_audit_events(p_workspace_id uuid, p_limit integer default 200)
+returns jsonb language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare v_events jsonb;
+begin
+  if not public.brandlens_is_member(p_workspace_id) then raise exception 'You are not a member of this workspace.'; end if;
+  select coalesce(jsonb_agg(to_jsonb(e) order by e.created_at desc,e.id desc),'[]'::jsonb)
+  into v_events from (
+    select id,event_key,workspace_id,actor_id,action,detail,metadata,created_at
+    from public.workspace_audit_events where workspace_id=p_workspace_id
+    order by created_at desc,id desc limit greatest(1,least(coalesce(p_limit,200),500))
+  ) e;
+  return v_events;
+end;
+$$;
+
+revoke all on function public.append_brandlens_audit_event(uuid,jsonb) from public, anon;
+revoke all on function public.list_brandlens_audit_events(uuid,integer) from public, anon;
+grant execute on function public.append_brandlens_audit_event(uuid,jsonb) to authenticated;
+grant execute on function public.list_brandlens_audit_events(uuid,integer) to authenticated;

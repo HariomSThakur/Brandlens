@@ -12,12 +12,14 @@ export function analyzeDraft(draft, { sources = [], claims = [], today = new Dat
     const norm = text.toLowerCase();
     const oldClaim = claims.find(c => norm.includes(String(c.wording).toLowerCase()));
     const linkedSource = oldClaim && sources.find(s => s.id === oldClaim.sourceId);
-    const claimExpired = oldClaim && (oldClaim.status !== 'approved' || (oldClaim.reviewDate && oldClaim.reviewDate < today) || (linkedSource?.expiry && linkedSource.expiry < today));
-    if (claimExpired) add('Expired claim evidence', 'claim', 'high', text, `This wording matches a claim whose review date passed on ${oldClaim.reviewDate || 'its review date'}. Refresh and approve its evidence before reuse.`, oldClaim.alternativeWording || '', linkedSource);
+    const claimExpired = oldClaim && (oldClaim.status !== 'approved' || (oldClaim.reviewDate && oldClaim.reviewDate < today) || (oldClaim.expiryDate && oldClaim.expiryDate < today) || (linkedSource?.expiry && linkedSource.expiry < today) || (oldClaim.sourceVersion && linkedSource?.version && Number(oldClaim.sourceVersion)!==Number(linkedSource.version)));
+    if (claimExpired) add('Expired claim evidence', 'claim', 'high', text, `This wording is no longer current: ${oldClaim.staleReason || (oldClaim.sourceVersion && linkedSource?.version && Number(oldClaim.sourceVersion)!==Number(linkedSource.version) ? `its evidence is source version ${oldClaim.sourceVersion}, while the current source is version ${linkedSource.version}` : `its review date is ${oldClaim.expiryDate || oldClaim.reviewDate || linkedSource?.expiry || 'due'}`)}. Refresh and approve its evidence before reuse.`, oldClaim.alternativeWording || '', linkedSource);
     else if (!oldClaim && (/\b(clinically proven|clinically tested|guarantee(?:d)?|erase|cure|permanent)\b/i.test(text) || /\b100\s*%/i.test(text) || /\b\d[\d,]*\+?\s*(?:%|ml|customers|families|users|people|days?|weeks?|months?)(?!\w)/i.test(text))) add('Claim needs evidence', 'claim', 'high', text, 'This sentence makes a performance, timeframe or quantified claim. Verify that the approved source supports the exact result and scope before use.', '', sourceFact);
-    if (sourceFact?.content) {
+    const claimEvidenceText=oldClaim?.supportingExcerpt||linkedSource?.content||'';
+    const numericEvidenceText=claimEvidenceText||sourceFact?.content||'';
+    if (numericEvidenceText) {
       quantity.lastIndex=0;
-      const sourceQuantities = [...sourceFact.content.matchAll(quantity)].filter(m => { const start=sourceFact.content.lastIndexOf('.',m.index)+1; return !/did not evaluate/i.test(sourceFact.content.slice(start,m.index)); }).map(normalizedQuantity).map(([n,u]) => `${n}:${u}`);
+      const sourceQuantities = [...numericEvidenceText.matchAll(quantity)].filter(m => { const start=numericEvidenceText.lastIndexOf('.',m.index)+1; return !/did not evaluate/i.test(numericEvidenceText.slice(start,m.index)); }).map(normalizedQuantity).map(([n,u]) => `${n}:${u}`);
       quantity.lastIndex=0;
       for (const m of text.matchAll(quantity)) {
         const [n,u] = normalizedQuantity(m);
@@ -32,7 +34,7 @@ export function analyzeDraft(draft, { sources = [], claims = [], today = new Dat
     const banned = text.match(/\b(whitening|bleaching)\b/i);
     if (banned) add('Terminology', 'terminology', 'medium', banned[0], 'The writing guide asks creators to use approved brand terminology.', 'brightening', guide);
     if (/!{2,}/.test(text)) add('Tone', 'tone', 'low', text, 'The writing guide allows at most one exclamation mark per post.', text.replace(/!{2,}/g, '!'), guide);
-    if (/^[A-Z\d\s.,!?'-]{18,}$/.test(text) && /[A-Z]/.test(text)) add('Readability', 'readability', 'low', text, 'This all-caps text may be harder to scan. Review the casing.', text.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()), guide);
+    if (/^[A-Z\d\s.,!?'-]{18,}$/.test(text) && /[A-Z]/.test(text)) add('Readability', 'readability', 'low', text, 'This all-caps text may be harder to scan. Review the casing.', text.toLowerCase().replace(/(^|[.!?]\s+)([a-z])/g,(_,lead,letter)=>lead+letter.toUpperCase()), guide);
     if (text.split(/\s+/).length > 38) add('Readability', 'readability', 'low', text, 'This sentence is long. Consider splitting it so readers can scan it more easily.', '', guide);
   }
   return findings;

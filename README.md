@@ -1,4 +1,4 @@
-# BrandLens — Round 2 MVP
+# BrandLens — Codex 48 Round 3 build
 
 BrandLens is a pre-publication content review app for small marketing and communications teams. It checks a draft against fictional or user-supplied brand guidance, approved source excerpts, claim dates and writing rules. People decide what to change and whether to approve.
 
@@ -34,7 +34,7 @@ The set is small and both rules and labels were authored by the project develope
 ```mermaid
 flowchart LR
   A[Draft in browser] --> B[Shared deterministic rule module]
-  C[Approved sources and claim ledger] --> B
+  C[Versioned sources and evidence-backed claim ledger] --> B
   B --> D[Evidence-linked findings]
   A -. optional request .-> E[Node server]
   C -. relevant excerpts .-> E
@@ -42,6 +42,9 @@ flowchart LR
   F --> G[Advisory findings with exact-quote validation]
   D --> H[Human decision and activity history]
   H --> I[Local storage or Supabase role-checked RPC]
+  C --> J[Re-review queue for changed or expired evidence]
+  H --> K[Guideline health signals and owner decisions]
+  H --> L[Append-only, server-stamped Supabase audit events]
 ```
 
 ## Run locally
@@ -65,9 +68,12 @@ node server.mjs
 1. Load the fictional workspace or import a `.txt` / `.md` draft.
 2. Run deterministic checks for unsupported and expired claims, numeric conflicts, restricted terminology, excess exclamation marks, all-caps text and long sentences.
 3. Inspect the exact draft text, the linked source, the reason and a suggested edit.
-4. Accept an edit, edit the draft, escalate, dismiss a non-claim finding with a reason, or resolve a claim with a source and reason.
-5. Record human approval only after every finding has a recorded decision. Approval is recorded in the audit log; the app does not publish.
-6. Browse facts and rules, add approved claims, view the activity log, manage shared team access with Admin/Reviewer/Creator roles, choose Light/Dark/Dark blue themes, and export a JSON backup. Reviews are tied to the exact draft and evidence set; changing either requires a fresh review before approval.
+4. Inspect a ledger-backed word-level rewrite, accept or reject it individually, then rerun deterministic checks. Unsafe or unsupported replacements are withheld.
+5. Escalate, dismiss a non-claim finding with a reason, or resolve a claim finding with a source and reason.
+6. Record a human approval only after every finding has a disposition. Approval stores the exact draft and its source/claim versions; the app does not publish.
+7. Track claim owner, exact supporting excerpt, extracted key values, source version and expiry. Source edits or expiry put dependent claims and past approvals into the re-review queue.
+8. Review repeated dismissals, overrides, escalations and possible guideline conflicts. An Admin can record “clarify”, “add exception” or “retire” with a rationale; BrandLens never changes policy automatically.
+9. Browse facts and rules, manage shared team access with Admin/Reviewer/Creator roles, choose Light/Black/Dark blue themes, and export a JSON backup. Changing a draft or evidence invalidates its current review.
 
 DOCX/image parsing and automated image recognition are not included in this MVP. The text import supports plain text and Markdown, with a 30,000-character draft limit.
 
@@ -75,17 +81,21 @@ DOCX/image parsing and automated image recognition are not included in this MVP.
 
 Follow [`docs/supabase-setup.md`](docs/supabase-setup.md) for the complete dashboard, SQL, local `.env`, account, and verification steps.
 
-The app uses Supabase Auth and role-checked RPCs for shared workspace sync, membership, and invitations. Database policies protect workspace state. Admins invite Reviewers or Creators; invitation emails must be shared out of band. Creators sync draft text, while Admins and Reviewers manage the shared findings and approval record. Revision checks prevent stale snapshots from silently overwriting newer workspace data. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. If Supabase is not configured, the app continues in local browser storage mode.
+The app uses Supabase Auth and role-checked RPCs for shared workspace sync, membership, invitations, and append-only audit events. Database policies protect workspace state. Admins invite Reviewers or Creators; invitation emails must be shared out of band. Creators sync draft text, while Admins and Reviewers manage evidence, findings, and approvals. Revision checks prevent stale snapshots from silently overwriting newer workspace data. Shared audit event authors and timestamps are assigned by the database; the snapshot-save RPC ignores client-supplied audit changes. Use the publishable key in `SUPABASE_PUBLISHABLE_KEY`; never use a secret or service-role key in this app. Reapply the current [`supabase/schema.sql`](supabase/schema.sql) before enabling the new append-only audit stream. If Supabase is not configured, the app continues in local browser storage mode.
 
 ## Optional Qwen review through Ollama
 
-Set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in the server's `.env` to an Ollama endpoint and a model already available there. Leave either value blank to run deterministic checks only. The server sends the draft and source excerpts in separate data blocks and asks for advisory JSON findings. The response is ignored unless each quoted draft span appears exactly in the submitted draft. The review panel and Settings show the active mode and configured Ollama model tag. If the model fails, deterministic checks remain usable. Record a short Qwen-path demo video after configuring the actual Ollama checkpoint; the repository does not assume a model tag that has not been configured.
+Set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in the server's `.env` to an Ollama endpoint and a model already available there. Leave either value blank to run deterministic checks only. The server sends the draft and source excerpts in separate data blocks and asks for advisory JSON findings. The response is ignored unless each quoted draft span appears exactly in the submitted draft. The review panel and Settings show the active mode and configured Ollama model tag. If the model fails, deterministic checks remain usable. The hosted demo currently runs without a configured Ollama checkpoint; no video is required by the official event page.
 
-The model endpoint is optional. Do not expose a remote model endpoint or send confidential content until its retention and access settings have been reviewed.
+Optional model tone rewrites are shown only after quote, protected-name/link/number, and deterministic re-review checks. Model output cannot generate or rewrite a claim. The model endpoint is optional. Do not expose a remote model endpoint or send confidential content until its retention and access settings have been reviewed.
 
-## Screenshots and hosted demo
+## Hosted demo and repository
 
-No public demo URL or verified product GIF is included yet. Add a short screen recording of the finding-card workflow after deploying and verify the URL from a clean browser session. The local flow above is available immediately.
+- Demo: <https://brandlens-round2.onrender.com>
+- Repository: <https://github.com/HariomSThakur/Brandlens>
+- Round 3 submission notes: [`docs/round3-submission.md`](docs/round3-submission.md)
+
+Confirm the live deploy includes the latest commit and apply the current Supabase schema before using shared accounts. The deterministic demo can be used without sign-in.
 
 ## Deploying a public demo
 
@@ -94,21 +104,28 @@ The repository includes `render.yaml` for a Node web service. Connect this direc
 ## Round 2 plan changes
 
 - The MVP uses a small Node.js built-in HTTP server and browser JavaScript instead of introducing a frontend framework and package-install step during the short build window.
-- The MVP stores a shared workspace as a JSONB snapshot in Supabase. Admin, Reviewer, and Creator membership is role-checked by database RPCs and row-level security; local mode uses browser storage.
-- MVP imports `.txt` and `.md`; DOCX parsing, image/alt-text accessibility checks, guideline-insights page, automated visual checks, and richer integrations are deferred. The current MVP does not claim to implement those Round 1 plan items.
+- The shared workspace still uses a JSONB snapshot for the MVP. Admin, Reviewer, and Creator membership is role-checked by database RPCs and row-level security; cloud audit events use a separate append-only table. Local mode uses browser storage.
+- DOCX/image parsing, image alt-text checking, automatic invitations, workspace switching, and multi-language review remain deferred. Text import supports `.txt` and `.md`, with a 30,000-character draft limit.
 - The model call is optional and server-side. Deterministic rules are the reliable baseline.
 
-## Round 3 improvements
+## Round 3 improvements delivered in this build
 
-1. Evidence-backed claim ledger with source ownership, version history, expiry alerts and reviewer substantiation.
-2. Guideline-health insights that surface repeated dismissals, overrides and conflicting rules for owner review.
-3. Minimal-diff, intent-preserving rewrites with clearer span highlighting and per-change review.
+1. **Evidence-backed claim lifecycle:** claims store an owner, source version, exact excerpt, extracted values, alternative wording and review date. Source versions are retained. Source changes, claim expiry or source expiry put dependent claims and historical approvals in the re-review queue. Past approval snapshots remain unchanged; users load the draft, run it again, and record a new human approval.
+2. **Guideline-health insights:** the app groups repeated finding dismissals, accepted edits and escalations; detects incompatible numeric thresholds across guidance and approved claims that use terms restricted by a guideline; shows source excerpts and outcome examples; and records an Admin decision with a rationale. Follow-up dismissal rate is reported after a decision when later outcomes exist. No rule is changed automatically.
+3. **Verified minimal-diff rewrites:** replacements come from a guideline's explicit terminology mapping or an approved claim alternative. Optional model tone text is advisory. Links, names and non-claim numbers are protected, claim numbers must occur in the exact support excerpt, and the entire draft is rechecked before showing an edit. Each change is accepted or rejected separately and stored in revision history.
+
+### Verification notes
+
+- `npm test`: 10 focused Node tests cover quantity extraction, source-version and expiry queues, historical approval invalidation when a source or claim changes, conflicting rules, repeated outcomes and follow-up rates, safe rewrites, protected values, and word diffs.
+- `npm run eval`: the original 40 author-labeled fixtures produce the same baseline as Round 2: micro precision 100.0%, recall 100.0%, and 0 false alarms across 15 clean drafts. This is a self-authored smoke benchmark, not independent validation or a real-world accuracy estimate.
+- Automated local HTTP/browser smoke testing was blocked in the build environment because its socket policy denied loopback access. A live Supabase account/database run is also required to verify the append-only RPC against the owner's project after applying the updated schema.
+- User interviews: n=0. The dataset and demo brand are fictional.
 
 ## Security and limitations
 
 - The bundled workspace is fictional and contains no real brand data.
 - Local storage is limited to the current browser profile and is not encrypted by this app.
 - Cloud accounts use Supabase Auth, shared workspace membership, role-checked write RPCs, and row-level security. Invites are recorded in Supabase but not emailed automatically.
-- Model output is advisory, checked against the submitted draft, and never approves or publishes.
+- Model output is advisory, quote-checked and re-reviewed deterministically; claim rewrites must come from the approved claim ledger. Models never approve or publish.
 - Deterministic checks can miss claims or raise false alarms; the initial author-labeled evaluation is small and not independently validated. A human reviewer remains responsible.
 - This MVP is not legal advice and does not establish that a claim is true.

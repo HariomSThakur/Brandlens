@@ -10,8 +10,8 @@ Create a project at [supabase.com/dashboard](https://supabase.com/dashboard) and
 
 1. Open the project **SQL Editor** and choose **New query**.
 2. Paste all of `supabase/schema.sql` and click **Run**.
-3. The script creates shared workspaces, membership, invitations, role-checked RPCs, and row-level security. Existing `workspace_state` payloads are migrated into workspaces and preserved. Do not delete the existing `workspace_state` table or the accidental empty `Brand len` table.
-4. If you already ran an older BrandLens schema, run this updated file in SQL Editor as a migration.
+3. The script creates shared workspaces, membership, invitations, role-checked RPCs, row-level security, revision-checked saves, and a server-stamped append-only activity table. Existing `workspace_state` payloads are migrated into workspaces and preserved. Do not delete the existing `workspace_state` table or the accidental empty `Brand len` table.
+4. If you already ran an older BrandLens schema, run this updated file in SQL Editor as a migration. Re-running it adds the audit table and read/write RPCs; the snapshot save RPC also stops accepting client edits to the audit field.
 
 ## 3. Set up the app
 
@@ -42,12 +42,13 @@ Roles: **Admin** can manage membership and all workspace data. **Reviewer** can 
 
 ## 5. Appearance
 
-Open **Settings → Appearance** to choose Light, Dark, or Dark blue. The choice is stored in that browser.
+Open **Settings → Appearance** to choose Light, Black, or Dark blue. The choice is stored in that browser.
 
 ## Troubleshooting
 
 - **The sync button still says Connect Supabase:** check `.env` names and restart Node.
 - **Schema or permission error:** rerun the current `supabase/schema.sql` in SQL Editor and ensure RLS is enabled.
+- **Audit events remain pending:** confirm the current schema has run, then use **Sync workspace** while online. The event key makes retries safe; the database assigns the actor and time.
 - **Invite cannot be accepted:** confirm the signed-in email exactly matches the invitation. An account already attached to another workspace cannot join this workspace in the current version.
 - **Sign-up asks for email confirmation:** confirm the email, then sign in. Hosted test email delivery can be rate-limited.
 - **Local changes appear missing:** existing cloud data loads on sign-in. Export a JSON backup before testing if you need to preserve local-only changes.
