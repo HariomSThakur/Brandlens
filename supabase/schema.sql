@@ -1,6 +1,9 @@
 -- BrandLens team workspaces and role-protected shared state.
 -- Safe to run after the original per-user workspace_state setup.
 
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+
 create table if not exists public.workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null default 'BrandLens Workspace',
@@ -23,8 +26,15 @@ create table if not exists public.workspace_invitations (
   role text not null check (role in ('reviewer','creator')),
   invited_by uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
+  invite_code_hash text,
+  expires_at timestamptz,
   unique (workspace_id, email)
 );
+
+-- Existing pending invitations have no code proof and therefore fail closed.
+-- Admins can reissue each invitation to generate a new code and expiry.
+alter table public.workspace_invitations add column if not exists invite_code_hash text;
+alter table public.workspace_invitations add column if not exists expires_at timestamptz;
 
 create table if not exists public.workspace_state (
   owner_id uuid primary key references auth.users(id) on delete cascade,
@@ -109,41 +119,79 @@ grant select on public.workspaces, public.workspace_members, public.workspace_in
 revoke all on public.workspace_state from anon, authenticated;
 grant select on public.workspace_state to authenticated;
 
-create or replace function public.get_or_create_brandlens_workspace(p_name text, p_initial_payload jsonb)
+drop function if exists public.get_or_create_brandlens_workspace(text,jsonb);
+
+create or replace function public.get_or_create_brandlens_workspace(
+  p_name text,
+  p_initial_payload jsonb,
+  p_invite_code text default null
+)
 returns jsonb
 language plpgsql security definer
 set search_path = public, auth, pg_temp
 as $$
 declare
   v_user uuid := auth.uid();
-  v_email text := lower(coalesce(auth.jwt()->>'email',''));
+  v_email text := lower(trim(coalesce(auth.jwt()->>'email','')));
   v_workspace uuid;
   v_role text;
   v_name text;
   v_payload jsonb;
   v_revision bigint;
+  v_has_invitation boolean;
+  v_crypto_schema text;
+  v_invite_code_hash text;
   v_invite public.workspace_invitations%rowtype;
 begin
   if v_user is null then raise exception 'Sign in is required.'; end if;
 
-  select i.* into v_invite
-  from public.workspace_invitations i
-  where lower(i.email) = v_email
-  order by i.created_at asc limit 1;
+  -- Serialize workspace creation or invitation redemption for this account.
+  perform 1 from auth.users u where u.id = v_user for update;
 
-  if found then
-    if exists (select 1 from public.workspace_members m where m.user_id = v_user) then
-      raise exception 'This account already belongs to a workspace. Ask an admin to invite an unused account.';
-    end if;
-    insert into public.workspace_members(workspace_id,user_id,role)
-    values(v_invite.workspace_id,v_user,v_invite.role)
-    on conflict(user_id) do nothing;
-    delete from public.workspace_invitations where id = v_invite.id;
-    v_workspace := v_invite.workspace_id;
-  else
-    select m.workspace_id, m.role into v_workspace, v_role
-    from public.workspace_members m where m.user_id = v_user limit 1;
-    if v_workspace is null then
+  -- Existing members can always reload their current workspace without a code.
+  select m.workspace_id into v_workspace
+  from public.workspace_members m where m.user_id = v_user;
+
+  if v_workspace is null then
+    select exists (
+      select 1 from public.workspace_invitations i
+      where lower(i.email) = v_email
+    ) into v_has_invitation;
+
+    if v_has_invitation then
+      if coalesce(p_invite_code,'') !~ '^[0-9A-Fa-f]{64}$' then
+        raise exception 'A valid invitation code is required for this email address.';
+      end if;
+      select n.nspname into v_crypto_schema
+      from pg_extension e join pg_namespace n on n.oid = e.extnamespace
+      where e.extname = 'pgcrypto';
+      if v_crypto_schema is null then raise exception 'The pgcrypto extension is required to redeem invitations.'; end if;
+      execute format('select encode(%I.digest(convert_to($1, ''UTF8''), ''sha256''), ''hex'')', v_crypto_schema)
+        into v_invite_code_hash using lower(trim(p_invite_code));
+
+      select i.* into v_invite
+      from public.workspace_invitations i
+      where lower(i.email) = v_email
+        and i.invite_code_hash is not null
+        and i.expires_at is not null
+        and i.invite_code_hash = v_invite_code_hash
+        and i.expires_at > now()
+      order by i.created_at asc
+      limit 1
+      for update;
+
+      if not found then
+        raise exception 'The invitation code is invalid or expired. Ask the Admin to reissue the invite.';
+      end if;
+
+      insert into public.workspace_members(workspace_id,user_id,role)
+      values(v_invite.workspace_id,v_user,v_invite.role);
+      delete from public.workspace_invitations where id = v_invite.id;
+      v_workspace := v_invite.workspace_id;
+    else
+      if nullif(trim(p_invite_code),'') is not null then
+        raise exception 'No pending invitation matches this code.';
+      end if;
       insert into public.workspaces(name,owner_id)
       values(coalesce(nullif(trim(p_name),''),'BrandLens Workspace'),v_user)
       returning id into v_workspace;
@@ -242,7 +290,14 @@ begin
 end;
 $$;
 
-create or replace function public.invite_brandlens_member(p_workspace_id uuid, p_email text, p_role text)
+drop function if exists public.invite_brandlens_member(uuid,text,text);
+
+create or replace function public.invite_brandlens_member(
+  p_workspace_id uuid,
+  p_email text,
+  p_role text,
+  p_invite_code_hash text
+)
 returns void
 language plpgsql security definer
 set search_path = public, pg_temp
@@ -252,9 +307,11 @@ begin
   if p_role not in ('reviewer','creator') then raise exception 'Choose Reviewer or Creator for an invite.'; end if;
   if lower(trim(p_email)) = lower(coalesce(auth.jwt()->>'email','')) then raise exception 'You already have workspace access.'; end if;
   if coalesce(trim(p_email),'') !~* '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'Enter a valid email address.'; end if;
-  insert into public.workspace_invitations(workspace_id,email,role,invited_by)
-  values(p_workspace_id,lower(trim(p_email)),p_role,auth.uid())
-  on conflict(workspace_id,email) do update set role=excluded.role,invited_by=excluded.invited_by,created_at=now();
+  if coalesce(trim(p_invite_code_hash),'') !~ '^[0-9a-fA-F]{64}$' then raise exception 'Invitation code digest is invalid.'; end if;
+  insert into public.workspace_invitations(workspace_id,email,role,invited_by,invite_code_hash,expires_at)
+  values(p_workspace_id,lower(trim(p_email)),p_role,auth.uid(),lower(trim(p_invite_code_hash)),now()+interval '7 days')
+  on conflict(workspace_id,email) do update set role=excluded.role,invited_by=excluded.invited_by,
+    invite_code_hash=excluded.invite_code_hash,expires_at=excluded.expires_at,created_at=now();
 end;
 $$;
 
@@ -269,7 +326,8 @@ begin
   select jsonb_build_object(
     'members',coalesce((select jsonb_agg(jsonb_build_object('user_id',m.user_id,'email',u.email,'role',m.role,'created_at',m.created_at) order by m.created_at)
       from public.workspace_members m join auth.users u on u.id=m.user_id where m.workspace_id=p_workspace_id),'[]'::jsonb),
-    'invitations',coalesce((select jsonb_agg(jsonb_build_object('email',i.email,'role',i.role,'created_at',i.created_at) order by i.created_at)
+    'invitations',coalesce((select jsonb_agg(jsonb_build_object('email',i.email,'role',i.role,'created_at',i.created_at,
+      'expires_at',i.expires_at,'has_invite_code',i.invite_code_hash is not null) order by i.created_at)
       from public.workspace_invitations i where i.workspace_id=p_workspace_id),'[]'::jsonb)
   ) into v_result;
   return v_result;
@@ -288,14 +346,14 @@ begin
 end;
 $$;
 
-revoke all on function public.get_or_create_brandlens_workspace(text,jsonb) from public, anon;
+revoke all on function public.get_or_create_brandlens_workspace(text,jsonb,text) from public, anon;
 revoke all on function public.save_brandlens_workspace(uuid,jsonb,bigint) from public, anon;
-revoke all on function public.invite_brandlens_member(uuid,text,text) from public, anon;
+revoke all on function public.invite_brandlens_member(uuid,text,text,text) from public, anon;
 revoke all on function public.list_brandlens_team(uuid) from public, anon;
 revoke all on function public.remove_brandlens_member(uuid,uuid) from public, anon;
-grant execute on function public.get_or_create_brandlens_workspace(text,jsonb) to authenticated;
+grant execute on function public.get_or_create_brandlens_workspace(text,jsonb,text) to authenticated;
 grant execute on function public.save_brandlens_workspace(uuid,jsonb,bigint) to authenticated;
-grant execute on function public.invite_brandlens_member(uuid,text,text) to authenticated;
+grant execute on function public.invite_brandlens_member(uuid,text,text,text) to authenticated;
 grant execute on function public.list_brandlens_team(uuid) to authenticated;
 grant execute on function public.remove_brandlens_member(uuid,uuid) to authenticated;
 
@@ -355,6 +413,9 @@ begin
   ) then raise exception 'Creators cannot append reviewer, approval, source, or policy decisions.'; end if;
   if v_role <> 'admin' and v_action = 'Guideline owner decision recorded' then
     raise exception 'Only an Admin can append a guideline owner decision.';
+  end if;
+  if v_role <> 'admin' and v_action in ('Workspace invite created','Workspace member removed') then
+    raise exception 'Only an Admin can append workspace access events.';
   end if;
   if jsonb_typeof(p_event) is distinct from 'object'
      or jsonb_typeof(p_event->'metadata') not in ('object','null')

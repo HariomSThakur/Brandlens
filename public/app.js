@@ -1,5 +1,6 @@
 import { analyzeDraft } from "./review-engine.js";
 import { claimReviewReasons, collectGuidelineInsights, extractKeyValues, migrateClaim, proposeVerifiedRewrite, refreshEvidenceLifecycle, updateSourceVersion, wordDiff } from "./workflow.js";
+import { generateInviteCode, hashInviteCode, isInviteCode } from "./invite-security.js";
 const STORAGE_KEY = 'brandlens.round2.workspace.v1';
 const SESSION_KEY = 'brandlens.supabase.session.v1';
 const THEME_KEY = 'brandlens.theme.v3';
@@ -39,6 +40,7 @@ let workspaceRole = null;
 let workspaceRevision = null;
 let auditRpcAvailable = null;
 let teamRequestVersion = 0;
+let pendingInviteCode = '';
 try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch {}
 let page = 'review';
 let pendingAction = null;
@@ -179,7 +181,7 @@ async function renderTeam() {
     const result = await rpcRequest('list_brandlens_team', {p_workspace_id: workspaceId});
     if (request !== teamRequestVersion) return;
     const members = result.members || [], invites = result.invitations || [];
-    node.innerHTML = `<div class="panel team-card"><div class="panel-head"><div><div class="section-kicker">INVITE COLLABORATORS</div><h2>Workspace team</h2></div><span class="role-badge">Admin</span></div><form id="invite-form" class="invite-form"><label>Email address<input name="email" type="email" required placeholder="teammate@example.com"></label><label>Role<select name="role"><option value="reviewer">Reviewer</option><option value="creator">Creator</option></select></label><button class="button button-primary">Create invite</button></form><p class="fine-print">Supabase stores the invite but does not send email. Share the invite with the person; they must create/sign in using this exact email. Each account can join one BrandLens workspace in this version.</p></div><div class="panel team-card"><div class="section-kicker">CURRENT MEMBERS</div><h2>People with access</h2><div class="team-list">${members.map(m=>`<div class="team-row"><div class="team-avatar">${esc((m.email||'User').slice(0,1).toUpperCase())}</div><div class="team-person"><b>${esc(m.email||'Account')}</b><small>${fmtDate(m.created_at)}</small></div><span class="role-badge">${esc(m.role)}</span>${m.role==='admin'?'<span class="fine-print">Owner</span>':`<button class="danger-button" data-remove-member="${esc(m.user_id)}">Remove</button>`}</div>`).join('')||'<p class="fine-print">No members yet.</p>'}</div>${invites.length?`<div class="section-kicker invite-heading">PENDING INVITES</div><div class="team-list">${invites.map(i=>`<div class="team-row"><div class="team-person"><b>${esc(i.email)}</b><small>Created ${fmtDate(i.created_at)}</small></div><span class="role-badge">${esc(i.role)}</span></div>`).join('')}</div>`:''}</div>`;
+    node.innerHTML = `<div class="panel team-card"><div class="panel-head"><div><div class="section-kicker">INVITE COLLABORATORS</div><h2>Workspace team</h2></div><span class="role-badge">Admin</span></div><form id="invite-form" class="invite-form"><label>Email address<input name="email" type="email" required placeholder="teammate@example.com"></label><label>Role<select name="role"><option value="reviewer">Reviewer</option><option value="creator">Creator</option></select></label><button class="button button-primary">Create invite</button></form><p class="fine-print">Supabase does not send invite emails. Share the one-time code privately; the teammate signs in with this exact email and enters the code. Recreating an invite for the same email rotates its code. Each account can join one workspace.</p></div><div class="panel team-card"><div class="section-kicker">CURRENT MEMBERS</div><h2>People with access</h2><div class="team-list">${members.map(m=>`<div class="team-row"><div class="team-avatar">${esc((m.email||'User').slice(0,1).toUpperCase())}</div><div class="team-person"><b>${esc(m.email||'Account')}</b><small>${fmtDate(m.created_at)}</small></div><span class="role-badge">${esc(m.role)}</span>${m.role==='admin'?'<span class="fine-print">Owner</span>':`<button class="danger-button" data-remove-member="${esc(m.user_id)}">Remove</button>`}</div>`).join('')||'<p class="fine-print">No members yet.</p>'}</div>${invites.length?`<div class="section-kicker invite-heading">PENDING INVITES</div><div class="team-list">${invites.map(i=>{const expired=!i.has_invite_code||!i.expires_at||new Date(i.expires_at).getTime()<=Date.now();const status=!i.has_invite_code?'Reissue required':expired?'Expired · reissue':`Expires ${fmtDate(i.expires_at)}`;return `<div class="team-row"><div class="team-person"><b>${esc(i.email)}</b><small>${esc(status)} · created ${fmtDate(i.created_at)}</small></div><span class="role-badge">${esc(i.role)}</span></div>`;}).join('')}</div>`:''}</div>`;
   } catch(error) { if (request === teamRequestVersion) node.innerHTML = `<div class="panel team-card"><h2>Could not load team</h2><p>${esc(error.message)}</p></div>`; }
 }
 function renderAll({draft=false}={}) {
@@ -286,7 +288,18 @@ function recordRewrite(f,accept){
 function sessionHeaders(extra={}) { return {apikey:config.supabaseAnonKey,authorization:`Bearer ${session?.access_token||config.supabaseAnonKey}`,...extra}; }
 function authModal(){
  if(!config.supabaseUrl||!config.supabaseAnonKey) return showModal('Connect Supabase','OPTIONAL CLOUD SYNC',`<div class="form-stack"><p>Supabase is optional. The project works in local demo mode now. To enable cloud accounts, set <code>SUPABASE_URL</code> and <code>SUPABASE_PUBLISHABLE_KEY</code> in your server’s <code>.env</code>, apply <code>supabase/schema.sql</code>, and restart the app.</p><p class="modal-help">Use only the publishable key in this app. Never expose a secret or service-role key.</p><div class="modal-actions"><button class="button button-outline" data-modal-close>Close</button></div></div>`);
- showModal('Sign in to sync','SUPABASE WORKSPACE',`<form id="auth-form" class="form-stack"><label>Email<input name="email" type="email" required autocomplete="email"></label><label>Password<input name="password" type="password" required minlength="6" autocomplete="current-password"></label><p class="modal-help">For a new account, use Create account. Email confirmation may be required by your Supabase project settings.</p><div class="modal-actions"><button type="button" class="button button-outline" data-auth-signup>Create account</button><button class="button button-primary">Sign in</button></div></form>`);
+ showModal('Sign in to sync','SUPABASE WORKSPACE',`<form id="auth-form" class="form-stack"><label>Email<input name="email" type="email" required autocomplete="email"></label><label>Password<input name="password" type="password" required minlength="6" autocomplete="current-password"></label><label>Invitation code <span class="fine-print">(invited teammates only)</span><input name="inviteCode" type="text" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the 64-character code"></label><p class="modal-help">Existing members and the first workspace Admin can leave this blank. Invited teammates need the code shared by their Admin. If email confirmation is required, enter it again after confirming.</p><div class="modal-actions"><button type="button" class="button button-outline" data-auth-signup>Create account</button><button type="submit" class="button button-primary">Sign in</button></div></form>`);
+}
+function showInviteRetryMode(){
+ const form=$('#auth-form');if(!form||!session||workspaceId)return;
+ const password=form.querySelector('[name="password"]')?.closest('label');if(password)password.hidden=true;
+ const signup=form.querySelector('[data-auth-signup]');if(signup)signup.hidden=true;
+ const help=form.querySelector('.modal-help');if(help)help.textContent='Your account is signed in. Enter a valid invitation code and continue. Existing members and first Admins can leave it blank.';
+ const submit=form.querySelector('button[type="submit"]');if(submit)submit.textContent='Continue to workspace';
+}
+function inviteCodeModal(){
+ const email=session?.user?.email||'your signed-in account';
+ showModal('Finish joining the workspace','INVITATION CODE',`<form id="invite-code-form" class="form-stack"><p>You are signed in as <b>${esc(email)}</b>. Enter the current code shared by the workspace Admin. Existing members and the first Admin can leave this blank.</p><label>Invitation code<input name="inviteCode" type="text" required maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the 64-character code"></label><div class="modal-actions"><button type="button" class="button button-outline" data-modal-close>Cancel</button><button type="submit" class="button button-primary">Join workspace</button></div></form>`);
 }
 async function authRequest(pathname,body){
  const response=await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/${pathname}`,{method:'POST',headers:{apikey:config.supabaseAnonKey,'content-type':'application/json'},body:JSON.stringify(body)});
@@ -311,7 +324,7 @@ async function syncAuditEvents() {
   state.audit=[...keepLocal,...byKey.values()];auditRpcAvailable=true;
  }catch(error){auditRpcAvailable=false;state.audit=state.audit.map(row=>({...row,remoteStatus:row.remoteStatus||'legacy'}));toast(`Workspace data synced, but shared append-only audit is unavailable. Apply the latest supabase/schema.sql. ${error.message}`,true);}
 }
-async function syncWorkspace(mode='load'){
+async function syncWorkspace(mode='load', inviteCode=pendingInviteCode){
  if(!config.supabaseUrl||!config.supabaseAnonKey)return authModal();
  if(!session)return authModal();
  try{
@@ -321,7 +334,7 @@ async function syncWorkspace(mode='load'){
    state={...sampleState(),...(saved.payload||{})};
    if(workspaceRole==='creator') toast('Draft saved. A Reviewer or Admin must run and save the shared review.');
   } else {
-   const cloud=await rpcRequest('get_or_create_brandlens_workspace',{p_name:state.workspace||'BrandLens Workspace',p_initial_payload:state});
+    const cloud=await rpcRequest('get_or_create_brandlens_workspace',{p_name:state.workspace||'BrandLens Workspace',p_initial_payload:state,p_invite_code:inviteCode||null});
    workspaceId=cloud.workspace_id; workspaceName=cloud.workspace_name||'BrandLens Workspace'; workspaceRole=cloud.role; workspaceRevision=Number(cloud.revision);
    state={...sampleState(),...(cloud.payload||{})};
   }
@@ -331,8 +344,10 @@ async function syncWorkspace(mode='load'){
   const profile=$('.profile-row'); if(profile){profile.querySelector('b').textContent=session.user?.email||'Signed-in member';profile.querySelector('small').textContent=`${workspaceRole} · shared workspace`;}
   localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
   audit(mode==='save'?'Workspace synced to Supabase':'Workspace loaded from Supabase',mode==='save'?'Shared workspace is up to date.':'Cloud workspace loaded into this browser.');
-  renderAll({draft:true}); if(!(mode==='save'&&workspaceRole==='creator'))toast(mode==='save'?'Workspace saved to Supabase.':'Workspace loaded from Supabase.');
- }catch(error){toast(error.message,true);}
+   if(mode!=='save')pendingInviteCode='';
+   if($('#auth-form')||$('#invite-code-form'))closeModal();
+   renderAll({draft:true}); if(!(mode==='save'&&workspaceRole==='creator'))toast(mode==='save'?'Workspace saved to Supabase.':'Workspace loaded from Supabase.');
+  }catch(error){const invitationRejected=/invitation code|pending invitation matches/i.test(error.message);if(invitationRejected){showInviteRetryMode();if(session&&!workspaceId&&!$('#auth-form')&&!$('#invite-code-form'))inviteCodeModal();}toast(error.message,true);}
 }
 async function exportBackup(){
  const blob=new Blob([JSON.stringify({exportedAt:iso(),workspace:state},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`brandlens-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(a.href);toast('Workspace backup downloaded.');
@@ -355,9 +370,10 @@ document.addEventListener('click',async event=>{
  if(event.target.closest('#export-button')){await exportBackup();return;}
  if(event.target.closest('#reset-demo')){if(confirm('Reset this browser to the fictional Luma Botanics demo workspace? This replaces its current local data.')){state=sampleState();renderAll({draft:true});go('review');toast('Fictional demo workspace restored.');}return;}
  if(event.target.closest('#modal-close')||event.target.closest('[data-modal-close]')){closeModal();return;}
- if(event.target.closest('[data-auth-signup]')){const form=$('#auth-form');const data=Object.fromEntries(new FormData(form));try{const result=await authRequest('signup',{email:data.email,password:data.password});if(result.access_token){session=result;sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();toast('Account created.');await syncWorkspace();}else toast('Check your email to confirm the account, then sign in.');}catch(error){toast(error.message,true);}return;}
+  if(event.target.closest('[data-copy-invite-code]')){const code=$('#invite-code-once')?.value||'';try{await navigator.clipboard.writeText(code);toast('Invitation code copied. Share it privately; it is shown only once.');}catch{$('#invite-code-once')?.select();toast('Select and copy the code, then share it privately.',true);}return;}
+  if(event.target.closest('[data-auth-signup]')){const form=$('#auth-form');const data=Object.fromEntries(new FormData(form));pendingInviteCode=(data.inviteCode||'').trim();if(pendingInviteCode&&!isInviteCode(pendingInviteCode))return toast('Invitation code must be 64 hexadecimal characters.',true);try{const result=await authRequest('signup',{email:data.email,password:data.password});if(result.access_token){session=result;sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));const password=form.querySelector('[name="password"]');if(password)password.value='';toast('Account created. Connecting to the workspace…');await syncWorkspace('load',pendingInviteCode);}else toast('Check your email to confirm the account, then return to sign in and enter the invitation code again.');}catch(error){toast(error.message,true);}return;}
  if(event.target.closest('#account-button')){
-  if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}session=null;workspaceId=null;workspaceRole=null;workspaceName='';workspaceRevision=null;sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
+   if(session&&confirm(`Sign out ${session.user?.email||'of this workspace'}?`)){try{await fetch(`${config.supabaseUrl.replace(/\/$/,'')}/auth/v1/logout`,{method:'POST',headers:sessionHeaders()});}catch{}pendingInviteCode='';session=null;workspaceId=null;workspaceRole=null;workspaceName='';workspaceRevision=null;sessionStorage.removeItem(SESSION_KEY);$('#sync-button').textContent='Sign in to sync';$('#storage-status').innerHTML='<i></i> Local demo';toast('Signed out. Local browser data remains available.');renderAll();}
   else if(!session)go('settings');return;
  }
  const act=event.target.closest('[data-finding-action]');if(act){const f=state.findings.find(x=>x.id===act.dataset.id);if(!f)return;const action=act.dataset.findingAction;if(session&&['resolve','dismiss','escalate'].includes(action)&&!canManageLibrary())return toast('Only Admins and Reviewers can record finding decisions.',true);if(session&&action==='dismiss'&&f.category==='claim')return toast('Claim findings cannot be dismissed.',true);
@@ -406,11 +422,16 @@ document.addEventListener('submit',async event=>{
   audit('Guideline owner decision recorded',`${insightAction}: ${decision.rationale}`,{insightKey,decision:'owner_decision',ownerAction:insightAction});closeModal();renderAll();toast('Owner decision recorded. The source and rule were not changed automatically.');return;
  }
  if(form.id==='invite-form'){
-  try{await rpcRequest('invite_brandlens_member',{p_workspace_id:workspaceId,p_email:data.email,p_role:data.role});audit('Workspace invite created',`${data.email} was invited as ${data.role}.`);await renderTeam();toast('Invite created. Share the exact email and sign-in instructions with your teammate.');}catch(error){toast(error.message,true);}return;
+  try{const inviteCode=generateInviteCode();const inviteCodeHash=await hashInviteCode(inviteCode);await rpcRequest('invite_brandlens_member',{p_workspace_id:workspaceId,p_email:data.email,p_role:data.role,p_invite_code_hash:inviteCodeHash});audit('Workspace invite created',`${data.email} was invited as ${data.role}.`);await renderTeam();showModal('Share this invitation code','SHOWN ONCE · EXPIRES IN 7 DAYS',`<div class="form-stack"><p>Send this code privately to <b>${esc(data.email)}</b>. They must sign in with that exact email and enter the code. BrandLens does not email it. Closing this dialog hides the code; reissue the invite to create another one.</p><label>One-time invitation code<input id="invite-code-once" type="text" readonly value="${esc(inviteCode)}" autocomplete="off"></label><div class="modal-actions"><button type="button" class="button button-outline" data-copy-invite-code>Copy code</button><button type="button" class="button button-primary" data-modal-close>Done</button></div></div>`);}catch(error){toast(error.message,true);}return;
  }
  if(form.id==='auth-form'){
-  try{session=await authRequest('token?grant_type=password',{email:data.email,password:data.password});sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));closeModal();$('#sync-button').textContent='Sync workspace';$('#storage-status').innerHTML='<i></i> Supabase connected';toast('Signed in. Syncing workspace…');await syncWorkspace('load');}
+  pendingInviteCode=(data.inviteCode||'').trim();if(pendingInviteCode&&!isInviteCode(pendingInviteCode))return toast('Invitation code must be 64 hexadecimal characters.',true);
+  try{if(session&&!workspaceId){await syncWorkspace('load',pendingInviteCode);return;}session=await authRequest('token?grant_type=password',{email:data.email,password:data.password});sessionStorage.setItem(SESSION_KEY,JSON.stringify(session));const password=form.querySelector('[name="password"]');if(password)password.value='';$('#sync-button').textContent='Sync workspace';$('#storage-status').innerHTML='<i></i> Supabase connected';toast('Signed in. Connecting to the workspace…');await syncWorkspace('load',pendingInviteCode);}
   catch(error){toast(error.message,true);}return;
+ }
+ if(form.id==='invite-code-form'){
+  pendingInviteCode=(data.inviteCode||'').trim();if(!isInviteCode(pendingInviteCode))return toast('Invitation code must be 64 hexadecimal characters.',true);
+  await syncWorkspace('load',pendingInviteCode);return;
  }
 });
 
