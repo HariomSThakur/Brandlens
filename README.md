@@ -118,10 +118,10 @@ The repository includes `render.yaml` for a Node web service. Connect this direc
 
 ### Verification notes
 
-- `npm test`: 10 focused Node tests cover quantity extraction, source-version and expiry queues, historical approval invalidation when a source or claim changes, conflicting rules, repeated outcomes and follow-up rates, safe rewrites, protected values, and word diffs.
+- `npm test`: 33 Node tests cover invitation-code generation and flow, role/audit SQL contracts, request and model-response limits, quantity extraction, source-version and expiry queues, historical approval invalidation, conflicting rules, safe rewrites, and word diffs.
 - `npm run eval`: the original 40 author-labeled fixtures produce the same baseline as Round 2: micro precision 100.0%, recall 100.0%, and 0 false alarms across 15 clean drafts. This is a self-authored smoke benchmark, not independent validation or a real-world accuracy estimate.
-- Automated local HTTP/browser smoke testing was blocked in the build environment because its socket policy denied loopback access. A live Supabase account/database run is also required to verify the append-only RPC against the owner's project after applying the updated schema.
-- User interviews: n=0. The dataset and demo brand are fictional.
+- Automated local HTTP/browser smoke testing was blocked in the build environment because its socket policy denied loopback access. The owner reports applying the latest Supabase schema; live invite redemption and separate Reviewer/Creator permission checks remain to be verified.
+- User interviews: n=0. The dataset and demo brand are fictional. Planned, not yet conducted: a usability check with three marketing content creators or reviewers using the numeric-conflict workflow.
 
 ## Security and limitations
 

@@ -10,7 +10,7 @@
 - Source repository: https://github.com/HariomSThakur/Brandlens
 - Updated PDF: `output/pdf/BrandLens-Codex-48-Round-3-Submission.pdf`
 
-The repository contains the source and the SQL needed for the shared audit feature. Before judging shared accounts, apply the current `supabase/schema.sql` to the Supabase project and verify a Reviewer/Creator login. The local deterministic workflow works without Supabase or an AI model.
+The owner reports applying the current `supabase/schema.sql` to the Supabase project. Live invitation redemption and separate Reviewer/Creator permission checks still need end-to-end verification. The local deterministic workflow works without Supabase or an AI model.
 
 ## What problem does the project solve?
 
@@ -34,7 +34,8 @@ Marketing teams reuse facts and claims across many drafts, but reviewers often h
 - Admin-recorded guideline decisions—clarify, add exception, or retire—with a rationale and follow-up dismissal-rate reporting when later outcomes exist.
 - Verified, per-finding minimal rewrites from explicit guideline mappings or ledger-approved claim alternatives, with protected values, word-level diffs, separate accept/reject actions and edit history.
 - Human review and approval records tied to the current draft and evidence versions.
-- Supabase Auth, shared Admin/Reviewer/Creator roles, revision-checked workspace saves and a database-stamped append-only audit-event schema.
+- Supabase Auth, shared Admin/Reviewer/Creator roles, single-use seven-day invitation codes stored as digests, revision-checked saves, and a database-stamped append-only audit-event schema with Admin-only access events.
+- Bounded optional Ollama review with request/source limits, per-process rate and concurrency limits, a 512-token generation cap and a 1,000,000-byte response cap.
 - Local browser storage, JSON backup export, and Light/Black/Dark blue themes.
 
 ## Technology and implementation
@@ -51,12 +52,12 @@ The Round 1 proposal included broader document and accessibility work. The shipp
 
 ## Testing notes
 
-- `npm test`: 10 focused tests passed for source and claim versions, expiry invalidation, approval queues, guideline conflicts, repeated outcomes, follow-up rates, safe rewrites, protected values and word diffs.
+- `npm test`: 33 tests passed for invitation-code generation and flow, role/audit SQL contracts, request and model-response limits, source and claim versions, expiry invalidation, approval queues, guideline conflicts, repeated outcomes, safe rewrites, protected values and word diffs.
 - `npm run eval`: 40 frozen, synthetic drafts (15 clean) yielded 100.0% micro precision and recall, with 0 false alarms on the clean set. The same project author wrote the rules, fixtures and labels, so this is a reproducible self-check, not independent or real-world validation.
 - Syntax checks passed for the browser modules and Node server.
 - Automated local HTTP/browser smoke testing was blocked in the build environment because its socket policy denied loopback access. The service process started; its `/` and `/api/health` routes could not be requested from the sandbox.
-- Live multi-account Supabase behavior and the new audit RPC still require applying the latest schema and testing against the owner's Supabase project.
-- User interviews completed: n=0. The demo brand and evidence are fictional.
+- The owner reports applying the latest Supabase schema. Live invitation redemption and separate Reviewer/Creator permission checks have not yet been verified. User interviews completed: n=0. The demo brand and evidence are fictional.
+- Planned usability check, not yet conducted: ask three people who create or review marketing content to complete the numeric-conflict workflow; record unaided completion, time and confusing findings, and report the actual sample size and results.
 
 ## Three Round 3 improvements delivered
 
